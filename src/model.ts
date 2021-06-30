@@ -740,6 +740,23 @@ export class GitExtension implements IGitExtension {
       });
     }
 
+
+    /**
+   * FOR TESTING ONLY - RETURN A LIST OF ALL CHANGED FILES
+   *
+   * @param auth - remote authentication information
+   * @returns promise which resolves upon fetching changes
+   *
+   * @throws {Git.NotInRepository} If the current path is not a Git repository
+   * @throws {Git.GitResponseError} If the server response is not ok
+   * @throws {ServerConnection.NetworkError} If the request cannot be made
+   */
+  async get_all_files(auth?: Git.IAuth,): Promise<Git.IChangedFilesResult> {
+    return await requestAPI<Git.IChangedFilesResult>('get_all_files', 'POST', {
+      current_path: this.pathRepository
+      });
+    }
+
   /**
    * Push local changes to a remote repository.
    *

@@ -481,6 +481,31 @@ class Git:
             i += PREVIOUS_COMMIT_OFFSET
         return {"code": code, "commits": result}
 
+    async def get_all_files(self, current_path):
+        """
+        Get all files that have been modified or added (but haven't been commited) and returns the result
+        """
+        cmd = ["git", "ls-files", "-o"]
+
+        response = {}
+        try:
+            code, output, error = await execute(
+                cmd,
+                cwd=os.path.join(self.root_dir, current_path),
+            )
+        except subprocess.CalledProcessError as e:
+            response["code"] = e.returncode
+            response["message"] = e.output.decode("utf-8")
+        else:
+            response["code"] = code
+            if code != 0:
+                response["command"] = " ".join(cmd)
+                response["message"] = error
+                response["code"] = code
+            else:
+                response["files"] = strip_and_split(output)
+        return response
+
     async def detailed_log(self, selected_hash, current_path):
         """
         Execute git log -1 --numstat --oneline -z command (used to get

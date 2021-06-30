@@ -1,4 +1,14 @@
-import { JupyterFrontEnd } from '@jupyterlab/application';
+import {
+  JupyterFrontEnd
+  // ,Router
+} from '@jupyterlab/application';
+import { 
+  KernelManager,
+  KernelSpecManager,
+  // KernelMessage, 
+  SessionManager } from '@jupyterlab/services';
+import { SessionContext } from '@jupyterlab/apputils';
+
 import {
   Dialog,
   InputDialog,
@@ -9,6 +19,7 @@ import {
   ToolbarButton,
   WidgetTracker
 } from '@jupyterlab/apputils';
+// import { IDocumentManager } from '@jupyterlab/docmanager';
 import { PathExt } from '@jupyterlab/coreutils';
 import { FileBrowser } from '@jupyterlab/filebrowser';
 import { Contents } from '@jupyterlab/services';
@@ -20,7 +31,10 @@ import { ArrayExt, toArray } from '@lumino/algorithm';
 import { CommandRegistry } from '@lumino/commands';
 import { PromiseDelegate } from '@lumino/coreutils';
 import { Message } from '@lumino/messaging';
-import { Menu, Panel } from '@lumino/widgets';
+import {
+  Menu,
+  Panel} from '@lumino/widgets';
+import { INotebookTracker, INotebookModel } from '@jupyterlab/notebook';
 import * as React from 'react';
 import { DiffModel } from './components/diff/model';
 import { createPlainTextDiff } from './components/diff/PlainTextDiff';
@@ -45,6 +59,9 @@ import {
 } from './tokens';
 import { GitCredentialsForm } from './widgets/CredentialsBox';
 import { GitCloneForm } from './widgets/GitCloneForm';
+import { DocumentRegistry } from '@jupyterlab/docregistry';
+// import { GitWidget } from './widgets/GitWidget';
+// import { DocumentRegistry } from '@jupyterlab/docregistry';
 
 interface IGitCloneArgs {
   /**
@@ -64,7 +81,10 @@ enum Operation {
   Clone = 'Clone',
   Pull = 'Pull',
   Push = 'Push',
-  ShowDialog = 'Show'
+  ShowDialog = 'Show',
+  GetCurrentFile = 'GetCurrFile',
+  TC4ML = 'tc4ml',
+  RunMultipleCommands = 'RunMultCommands'
 }
 
 interface IFileDiffArgument {
@@ -85,7 +105,7 @@ export namespace CommandArguments {
 
 function pluralizedContextLabel(singular: string, plural: string) {
   return (args: any) => {
-    const { files } = (args as any) as CommandArguments.IGitContextAction;
+    const { files } = args as any as CommandArguments.IGitContextAction;
     if (files.length > 1) {
       return plural;
     } else {
@@ -102,6 +122,7 @@ export function addCommands(
   gitModel: GitExtension,
   fileBrowser: FileBrowser,
   settings: ISettingRegistry.ISettings,
+  notebookTracker: INotebookTracker,
   trans: TranslationBundle
 ): void {
   const { commands, shell } = app;
@@ -413,45 +434,330 @@ export function addCommands(
     }
   });
 
-    /** Add test SHOW MENU COMMAND */
-    commands.addCommand(CommandIDs.gitShowDialog, {
-      label: trans.__('Show Git Dialog Test'),
-      caption: trans.__('Git dialog test'),
-      isEnabled: () => gitModel.pathRepository !== null,
-      execute: async () => {
+  function saveDocument(
+    context: DocumentRegistry.IContext<INotebookModel>
+  ): void {
+    context
+      .save()
+      .then(() => {
         logger.log({
-          level: Level.RUNNING,
-          message: trans.__('Showing git dialog...')
+          message: trans.__(`Successfully saved ${context.path}`),
+          level: Level.SUCCESS
         });
+      })
+      .catch(reason => {
+        logger.log({
+          message: `Error saving: ${context.path}`,
+          level: Level.ERROR,
+          error: reason
+        });
+      });
+  }
+
+  commands.addCommand(CommandIDs.saveNotebook, {
+    label: trans.__('Save the currently open notebook'),
+    caption: trans.__('save currently open notebook'),
+    isEnabled: () => gitModel.pathRepository !== null,
+    execute: async () => {
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('saving current notebook...')
+      });
+      try {
+        // TODO: add in check that we are in the right notebook (not in requirements.txt by accident)
+        // todo: restart and run all cells
+        // wait until it's done and then save
+
+        // STEP 1 - SET UP WIDGET / wait for it to not be null
+        (async () => {
+          while (!notebookTracker.currentWidget)
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          console.log('notebooktracker.currentWidget is defined');
+          console.log('context path is ');
+          console.log(notebookTracker.currentWidget.context.path);
+          console.log('localpath is ');
+          console.log(notebookTracker.currentWidget.context.localPath);
+          // STEP 3 - USE WIDGET TO SAVE
+          const context = notebookTracker.currentWidget.context;
+          saveDocument(context);
+        })();
+      } catch (error) {
+        console.error(
+          'Encountered an error when trying to save. Error: ',
+          error
+        );
+        logger.log({
+          message: trans.__('Failed to save'),
+          level: Level.ERROR,
+          error
+        });
+      }
+    }
+  });
+
+
+  commands.addCommand(CommandIDs.runMultipleCommands, {
+    label: "Run multiple commands",
+    execute: async args => {
+      const commandsString: string[] = args.commands as string[];
+      for (let i = 0; i < commandsString.length; i++) {
+        const cmd = commandsString[i];
+        await app.commands.execute(cmd);
+      }
+      console.log(`Commands ${commandsString} have completed.`);
+    }
+  });
+
+
+
+  commands.addCommand(CommandIDs.tc4ml, {
+    label: trans.__('Run TC4ML'),
+    caption: trans.__('tc4ml test'),
+    isEnabled: () => gitModel.pathRepository !== null,
+    execute: async args => {
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('going to run tc4ml steps...')
+      });
+
+      // startup session
+      const kernelManager = new KernelManager();
+      const specsManager = new KernelSpecManager();
+      const sessionManager = new SessionManager({ kernelManager });
+      const sessionContext = new SessionContext({
+        sessionManager,
+        specsManager,
+        name: 'tc4mlSessionContext'
+      });
+      
+
+      // kernelDisplayStatus
+      
+      function waitForKernelConnectedMessage() {
         try {
-          console.log(`testing out a new display`);
-          const details = await Private.showGitDialog(
-            gitModel,
-            Operation.ShowDialog,
-            trans,
-            'Select the changed files!',
-            [Dialog.okButton({ label: 'Okay' }),
-            Dialog.cancelButton()]
-            );
-            
+          const status = sessionContext.kernelDisplayStatus;
+          console.log(status)
+          console.log("inside try")
+        
+        if (status != "connected") {
+          setTimeout(waitForKernelConnectedMessage,1000) 
+          console.log("still waiting for kernel")
+          console.log(status);
+          
+        }
+        
+         else {
+          console.log("kernel is now connected!!")
+        }
+        return console.log("kernel is now connected!!")
+      } catch (e) {
+        console.log(sessionContext.kernelDisplayStatus)
+        console.log(e)
+        console.log("error ")
+      }
+    }
+      waitForKernelConnectedMessage
+      // step 1: run restart-kernel and run all
+      // TODO need a better way of handling this if it fails
+      // also need to figure out what to do if the kernel fails to
+      //  finish running all the way thru
+    
+    const restartAndRunAll: Promise<any> = await commands.execute('runmenu:restart-and-run-all');
+    logger.log({
+      level: Level.RUNNING,
+      message: trans.__('Restarting kernel...')
+      });
+      console.log(sessionContext.kernelDisplayStatus);
+    try {
+      if (restartAndRunAll) {
+        waitForKernelConnectedMessage
+        logger.log({
+          level: Level.SUCCESS,
+          message: trans.__('succesfully restarted and ran kernel...')
+        });
+        
+      }
+      return
+    } catch (error) {
+        console.error(error);
+        logger.log({
+          level: Level.ERROR,
+          message: trans.__(`error ${error}`),
+          error
+        })
+      }
+    // wait until kernel is back?
+    // KernelMessage.
+    // let KernelMessage = new KernelMessage;
+    // keep trying to connect w/ kernel? 
+    console.log(sessionContext.kernelDisplayStatus);
+    
+    console.log("all done with restarting kernel");
+
+
+    // step 2: save notebook
+    console.log("starting step 2 - saving notebook!");
+    const saveNotebook: Promise<any> = await commands.execute('git:saveNotebook');
+    
+    while (!notebookTracker.currentWidget)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    console.log('ok, notebooktracker.currentWidget exists and is defined')
+
+    const notebookName = representFilesEasy(notebookTracker.currentWidget.title.label);  
+    const result = await showDialog({
+      title: trans.__('Save current notebook'),
+      body: (
+        <span>
+          {trans.__(
+            'Would you like to save the following file or files?'
+          )}
+          {notebookName}
+        </span>
+      ),
+      buttons: [
+        Dialog.cancelButton({ label: trans.__('Cancel') }),
+        Dialog.okButton({ label: trans.__('Save') })
+      ]
+    });
+    if (result.button.accept) {
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('Saving current notebook...')});
+      try {
+        if (saveNotebook) {
           logger.log({
-            message: trans.__('Successfully showed dialog!!!'),
             level: Level.SUCCESS,
-            details
-          });
-        } catch (error) {
-          console.error(
-            'Encountered an error when showing dialog. Error: ',
-            error
-          );
-          logger.log({
-            message: trans.__('Failed to show dialog'),
-            level: Level.ERROR,
-            error
+            message: trans.__('succesfully saved current notebook...')
           });
         }
+        return 
+      } catch (error) {
+        console.error(error);
+        logger.log({
+          level: Level.ERROR,
+          message: trans.__(`error in saving current notebook ${error}`),
+          error
+        })
       }
-    });
+    } else {
+      logger.log({
+        level: Level.ERROR,
+        message: trans.__('Failed to save notebook - dialog crashed...')});
+    }
+  }
+});
+
+
+
+      // step 3: save 
+
+      
+      // const main = (await commands.execute(
+      //   'terminal:create-new',
+      //   args
+      // )) as MainAreaWidget<ITerminal.ITerminal>;
+
+      // try {
+      //   if (gitModel.pathRepository !== null) {
+      //     const terminal = main.content;
+      //     terminal.session.send({
+      //       type: 'stdin',
+      //       content: [
+      //         `cd "${gitModel.pathRepository.split('"').join('\\"')}"\n`
+      //       ]
+      //     });
+      //   }
+
+      //   return main;
+      // } catch (e) {
+      //   console.error(e);
+      //   main.dispose();
+      // }
+
+
+
+  /** Add test SHOW MENU COMMAND */
+  commands.addCommand(CommandIDs.gitShowDialog, {
+    label: trans.__('Show Git Dialog Test'),
+    caption: trans.__('Git dialog test'),
+    isEnabled: () => gitModel.pathRepository !== null,
+    execute: async () => {
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('Showing git dialog...')
+      });
+      try {
+        const details = await Private.showGitDialog(
+          gitModel,
+          Operation.ShowDialog,
+          trans,
+          'Select the files you want to commit',
+          [Dialog.okButton({ label: 'Okay' }), Dialog.cancelButton()]
+        );
+
+        logger.log({
+          message: trans.__('Successfully showed dialog!!!'),
+          level: Level.SUCCESS,
+          details
+        });
+      } catch (error) {
+        console.error(
+          'Encountered an error when showing dialog. Error: ',
+          error
+        );
+        logger.log({
+          message: trans.__('Failed to show dialog'),
+          level: Level.ERROR,
+          error
+        });
+      }
+    }
+  });
+
+  /** Add test TO ONLY SHOW CURRENT FILE` */
+  commands.addCommand(CommandIDs.gitGetAllFiles, {
+    label: trans.__('Git push our current file'),
+    caption: trans.__('Git current file test'),
+    isEnabled: () => gitModel.pathRepository !== null,
+    execute: async () => {
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('Showing git current menu dialog...')
+      });
+      try {
+        console.log(`You just clicked on the Show Me The Current File Dialog`);
+
+        console.log('this is the sessionContext of notebook');
+        console.log(notebookTracker.currentWidget.sessionContext);
+        console.log('this is the context of notebook');
+        console.log(notebookTracker.currentWidget.context);
+        const details = await Private.gitGetAllFiles(
+          gitModel,
+          Operation.GetCurrentFile,
+          trans,
+          'Is this your current file?',
+          [Dialog.okButton({ label: 'Okay' }), Dialog.cancelButton()],
+          notebookTracker
+        );
+
+        logger.log({
+          message: trans.__('Successfully showed dialog!!!'),
+          level: Level.SUCCESS,
+          details
+        });
+      } catch (error) {
+        console.error(
+          'Encountered an error when showing dialog. Error: ',
+          error
+        );
+        logger.log({
+          message: trans.__('Failed to show dialog'),
+          level: Level.ERROR,
+          error
+        });
+      }
+    }
+  });
 
   /**
    * Git display diff command - internal command
@@ -464,7 +770,7 @@ export function addCommands(
     label: trans.__('Show Diff'),
     caption: trans.__('Display a file diff.'),
     execute: async args => {
-      const { model, isText } = (args as any) as {
+      const { model, isText } = args as any as {
         model: Git.Diff.IModel<string>;
         isText?: boolean;
       };
@@ -557,7 +863,7 @@ export function addCommands(
       trans.__('Open selected files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       for (const file of files) {
         const { x, y, to } = file;
         if (x === 'D' || y === 'D') {
@@ -590,7 +896,7 @@ export function addCommands(
       trans.__('Diff selected files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitFileDiff;
+      const { files } = args as any as CommandArguments.IGitFileDiff;
       for (const file of files) {
         const { context, filePath, isText, status } = file;
 
@@ -697,7 +1003,7 @@ export function addCommands(
       trans.__('Stage or track the changes of selected files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       for (const file of files) {
         await gitModel.add(file.to);
       }
@@ -712,7 +1018,7 @@ export function addCommands(
       trans.__('Stage the changes of selected files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       for (const file of files) {
         await gitModel.add(file.to);
       }
@@ -727,7 +1033,7 @@ export function addCommands(
       trans.__('Start tracking selected files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       for (const file of files) {
         await gitModel.add(file.to);
       }
@@ -742,7 +1048,7 @@ export function addCommands(
       trans.__('Unstage the changes of selected files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       for (const file of files) {
         if (file.x !== 'D') {
           await gitModel.reset(file.to);
@@ -761,6 +1067,11 @@ export function addCommands(
     return <ul>{elements}</ul>;
   }
 
+  function representFilesEasy(file: string): JSX.Element {
+    const elements = <li>{file}</li>;
+    return <ul>{elements}</ul>;
+  }
+
   commands.addCommand(ContextCommandIDs.gitFileDelete, {
     label: trans.__('Delete'),
     caption: pluralizedContextLabel(
@@ -768,7 +1079,7 @@ export function addCommands(
       trans.__('Delete these files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       const fileList = representFiles(files);
 
       const result = await showDialog({
@@ -811,7 +1122,7 @@ export function addCommands(
       trans.__('Discard recent changes of selected files')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       const fileList = representFiles(files);
 
       const result = await showDialog({
@@ -869,7 +1180,7 @@ export function addCommands(
       trans.__('Ignore these files (add to .gitignore)')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       for (const file of files) {
         if (file) {
           await gitModel.ignore(file.to, false);
@@ -880,7 +1191,7 @@ export function addCommands(
 
   commands.addCommand(ContextCommandIDs.gitIgnoreExtension, {
     label: args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       const extensions = files
         .map(file => PathExt.extname(file.to))
         .filter(extension => extension.length > 0);
@@ -896,7 +1207,7 @@ export function addCommands(
       trans.__('Ignore these files extension (add to .gitignore)')
     ),
     execute: async args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       for (const selectedFile of files) {
         if (selectedFile) {
           const extension = PathExt.extname(selectedFile.to);
@@ -920,7 +1231,7 @@ export function addCommands(
       }
     },
     isVisible: args => {
-      const { files } = (args as any) as CommandArguments.IGitContextAction;
+      const { files } = args as any as CommandArguments.IGitContextAction;
       return files.some(selectedFile => {
         const extension = PathExt.extname(selectedFile.to);
         return extension.length > 0;
@@ -958,28 +1269,39 @@ export function createGitMenu(
   ];
 
   const menu = new Menu({ commands });
-  menu.title.label = 'Git';
+  menu.title.label = 'tc4ml-sbc-github extension';
   [
-    CommandIDs.gitInit,
-    CommandIDs.gitClone,
-    CommandIDs.gitPush,
-    CommandIDs.gitPull,
-    CommandIDs.gitAddRemote,
-    CommandIDs.gitTerminalCommand,
-    CommandIDs.gitShowDialog
+    // CommandIDs.gitPush,
+    // CommandIDs.gitPull,
+    CommandIDs.gitShowDialog,
+    CommandIDs.gitGetAllFiles,
+    // CommandIDs.tc4ml,
+    // CommandIDs.saveNotebook
   ].forEach(command => {
     menu.addItem({ command });
   });
 
   menu.addItem({ type: 'separator' });
 
-  menu.addItem({ command: CommandIDs.gitToggleSimpleStaging });
+  menu.addItem({ command: CommandIDs.saveNotebook });
 
-  menu.addItem({ command: CommandIDs.gitToggleDoubleClickDiff });
-
-  menu.addItem({ type: 'separator' });
-
-  menu.addItem({ command: CommandIDs.gitOpenGitignore });
+  menu.addItem({
+    command: CommandIDs.runMultipleCommands,
+    args: {
+      commands: [
+        'runmenu:restart-and-run-all',
+        // then, save my work
+        'docmanager:save-as',
+        // 'git:saveNotebook',
+        'git:show-all-files'
+        // git pick branch or make newone
+        // git add
+        // git commit
+        // git push
+        // git commit hash + link
+      ]
+    }
+  });
 
   menu.addItem({ type: 'separator' });
 
@@ -1009,7 +1331,7 @@ export function addMenuItems(
     if (command === ContextCommandIDs.gitFileDiff) {
       contextMenu.addItem({
         command,
-        args: ({
+        args: {
           files: selectedFiles.map(file => {
             return {
               filePath: file.to,
@@ -1017,14 +1339,14 @@ export function addMenuItems(
               status: file.status
             };
           })
-        } as CommandArguments.IGitFileDiff) as any
+        } as CommandArguments.IGitFileDiff as any
       });
     } else {
       contextMenu.addItem({
         command,
-        args: ({
+        args: {
           files: selectedFiles
-        } as CommandArguments.IGitContextAction) as any
+        } as CommandArguments.IGitContextAction as any
       });
     }
   });
@@ -1190,7 +1512,7 @@ namespace Private {
       switch (operation) {
         case Operation.Clone:
           // eslint-disable-next-line no-case-declarations
-          const { path, url } = (args as any) as IGitCloneArgs;
+          const { path, url } = args as any as IGitCloneArgs;
           result = await model.clone(path, url, authentication);
           break;
         case Operation.Pull:
@@ -1238,33 +1560,39 @@ namespace Private {
       throw error;
     }
   }
-  /**
-   * Git show dialog command - internal command, JUST FOR TESTING
-   *
-   * @params model {Git.Diff.IModel<string>}: The diff model to display
-   * @params isText {boolean}: Optional, whether the content is a plain text
-   * @returns the main area widget or null
-   *             
-   * 
-   */
-   export async function showGitDialog<T>(
+
+  export async function TC4ML<T>(
     model: GitExtension,
     operation: Operation,
     trans: TranslationBundle,
-    Title?: string,
-    Buttons?: any,
+    Title: string,
+    Buttons: any,
     retry = false,
     args?: T,
-    authentication?: Git.IAuth,
+    authentication?: Git.IAuth
+  ): Promise<any> {}
+
+  export async function gitGetAllFiles<T>(
+    model: GitExtension,
+    operation: Operation,
+    trans: TranslationBundle,
+    Title: string,
+    Buttons: any,
+    notebookTracker: INotebookTracker,
+    retry = false,
+    args?: T,
+    authentication?: Git.IAuth
   ): Promise<any> {
     try {
       let result: Git.IResultWithMessage;
       let test_result: Git.IChangedFilesResult;
       // the Git action
       switch (operation) {
-        case Operation.ShowDialog:
-          test_result = await model.show(authentication, "WORKING", "HEAD");
-          break;  
+        case Operation.GetCurrentFile:
+          console.log('did it break before?');
+          test_result = await model.get_all_files(authentication);
+          console.log('did it break after model.get_all_files??');
+          break;
         default:
           result = { code: -1, message: 'Unknown command' };
           break;
@@ -1272,19 +1600,26 @@ namespace Private {
       if (result) {
         return result.message;
       } else {
-        
-
-        const myDialog = await InputDialog.getItem({
-          title: Title,
-          items: ['saraj', 'sarah', 'haras']
-        }).then(value => {
-          console.log('you picked '+ value.value)
+        const file_information = model.status.files.map(f => {
+          return { from_file: f.from, to_file: f.to, status_file: f.status };
+        });
+        console.log('printing file_information');
+        console.log(file_information);
+        console.log('printing model.status.files');
+        console.log(model.status.files);
+        // console.log("printing out labShell.currentWidget.title.label");
+        // console.log(labShell.currentWidget.title.label);
+        // #2
+        // # this is to see if we can get the same value from using result
+        const myDialogResult = await InputDialog.getText({
+          title: 'This should only show us the file that we are currently on',
+          placeholder: notebookTracker.currentWidget.title.label
         });
 
-        
-        const myListOfFiles = test_result.files.join(",");
+        const myListOfFiles = test_result.files.join(',');
         console.warn(`printing out the list of files changed ${myListOfFiles}`);
-        return myDialog;
+
+        return myDialogResult;
       }
     } catch (error) {
       if (
@@ -1318,7 +1653,114 @@ namespace Private {
       // if the user did not accept to provide its credentials
       throw error;
     }
-  }  
+  }
+
+  /**
+   * Git show dialog command - internal command, JUST FOR TESTING
+   *
+   * @params model {Git.Diff.IModel<string>}: The diff model to display
+   * @params isText {boolean}: Optional, whether the content is a plain text
+   * @returns the main area widget or null
+   *
+   *
+   */
+  export async function showGitDialog<T>(
+    model: GitExtension,
+    operation: Operation,
+    trans: TranslationBundle,
+    Title: string,
+    Buttons: any,
+    retry = false,
+    args?: T,
+    authentication?: Git.IAuth
+  ): Promise<any> {
+    try {
+      let result: Git.IResultWithMessage;
+      let test_result: Git.IChangedFilesResult;
+      // the Git action
+      switch (operation) {
+        case Operation.ShowDialog:
+          test_result = await model.show(authentication, 'WORKING', 'HEAD');
+          break;
+        default:
+          result = { code: -1, message: 'Unknown command' };
+          break;
+      }
+      if (result) {
+        return result.message;
+      } else {
+        const file_information = model.status.files.map(f => {
+          return { from_file: f.from, to_file: f.to, status_file: f.status };
+        });
+        console.log('printing file_information');
+        console.log(file_information);
+        console.log('printing model.status.files');
+        console.log(model.status.files);
+        // // ****
+        // // for some reason, test_result is updated but file_information is not when we run it for the first time?
+        // // #1
+        const myDialog = await InputDialog.getItem({
+          title:
+            Title +
+            ' gets information from model.status.files, which relies on me pressing the gitwidget first to initialize it',
+          items: file_information.map(f => f.to_file)
+        }).then(value => {
+          console.log('you picked ' + value.value);
+        });
+
+        // #2
+        // # this is to see if we can get the same value from using result
+        const myDialogResult = await InputDialog.getItem({
+          title:
+            'Second dialog- supposed to have stuff in it, but only the files in changed!',
+          items: test_result.files
+          // items: file_information.map(f => f.to_file),
+        });
+        console.log(
+          `this is a test to see if we can get the same value from ${myDialogResult.value}`
+        );
+        console.log(myDialogResult.value);
+
+        const myListOfFiles = test_result.files.join(',');
+        console.warn(`printing out the list of files changed ${myListOfFiles}`);
+
+        myDialog;
+
+        return myDialogResult;
+      }
+    } catch (error) {
+      if (
+        AUTH_ERROR_MESSAGES.some(
+          errorMessage => error.message.indexOf(errorMessage) > -1
+        )
+      ) {
+        // If the error is an authentication error, ask the user credentials
+        const credentials = await showDialog({
+          title: trans.__('This test did not work!'),
+          body: new GitCredentialsForm(
+            trans,
+            trans.__('Enter credentials for remote repository'),
+            retry ? trans.__('Incorrect username or password.') : ''
+          )
+        });
+
+        if (credentials.button.accept) {
+          // Retry the operation if the user provides its credentials
+          return await showGitOperationDialog<T>(
+            model,
+            operation,
+            trans,
+            args,
+            credentials.value,
+            true
+          );
+        }
+      }
+      // Throw the error if it cannot be handled or
+      // if the user did not accept to provide its credentials
+      throw error;
+    }
+  }
 }
- 
+
 /* eslint-enable no-inner-declarations */

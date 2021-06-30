@@ -509,13 +509,28 @@ class GitPullHandler(GitHandler):
 
 class GitShowDialogHandler(GitHandler):
     """
-    Handler for 'git show-dialog'. Access remote branch and get all changed files. Copied from
+    TEST Handler for 'git show-dialog'. Access remote branch and get all changed files. Copied from
     GitChangedFilesHandler
     """
 
     @tornado.web.authenticated
     async def post(self):
         body = await self.git.changed_files(**self.get_json_body())
+
+        if body["code"] != 0:
+            self.set_status(500)
+        self.finish(json.dumps(body))
+
+
+class GitGetAllFilesHandler(GitHandler):
+    """
+    TEST Handler for `get-all-files'. Get all changed files (including ones that haven't been added to any branch). Copied from
+    GitChangedFilesHandler.
+    """
+
+    @tornado.web.authenticated
+    async def post(self):
+        body = await self.git.get_all_files(**self.get_json_body())
 
         if body["code"] != 0:
             self.set_status(500)
@@ -846,6 +861,7 @@ def setup_handlers(web_app):
         ("/git/log", GitLogHandler),
         ("/git/pull", GitPullHandler),
         ("/git/show", GitShowDialogHandler),
+        ("/git/get_all_files", GitGetAllFilesHandler),
         ("/git/push", GitPushHandler),
         ("/git/remote/add", GitRemoteAddHandler),
         ("/git/remote/fetch", GitFetchHandler),

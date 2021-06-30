@@ -13,6 +13,8 @@ import { gitWidgetStyle } from '../style/GitWidgetStyle';
 import { ILogMessage, Level } from '../tokens';
 import { TranslationBundle } from '@jupyterlab/translation';
 
+let count = 0;
+console.log(`initial count is ${count}`)
 /**
  * A class that exposes the git plugin Widget.
  */
@@ -52,6 +54,8 @@ export class GitWidget extends ReactWidget {
       console.error('Fail to refresh model when displaying GitWidget.', error);
     });
     super.onBeforeShow(msg);
+    count++;
+    console.log(`this is onBeforeShow at count ${count}`)
   }
 
   /**

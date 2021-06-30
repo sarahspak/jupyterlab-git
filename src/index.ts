@@ -1,4 +1,5 @@
 import {
+  ILabShell,
   ILayoutRestorer,
   JupyterFrontEnd,
   JupyterFrontEndPlugin
@@ -12,7 +13,7 @@ import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { IStatusBar } from '@jupyterlab/statusbar';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
-// import { Widget } from '@lumino/widgets';
+import { INotebookTracker } from '@jupyterlab/notebook';
 
 import {
   addCommands,
@@ -50,6 +51,8 @@ const plugin: JupyterFrontEndPlugin<IGitExtension> = {
     ISettingRegistry,
     IDocumentManager,
     IStatusBar,
+    ILabShell,
+    INotebookTracker,
     ITranslator
   ],
   provides: IGitExtension,
@@ -72,13 +75,16 @@ async function activate(
   factory: IFileBrowserFactory,
   renderMime: IRenderMimeRegistry,
   settingRegistry: ISettingRegistry,
-  docmanager: IDocumentManager,
+  docManager: IDocumentManager,
   statusBar: IStatusBar,
+  labShell: ILabShell,
+  notebookTracker: INotebookTracker,
   translator?: ITranslator
 ): Promise<IGitExtension> {
   let gitExtension: GitExtension | null = null;
   let settings: ISettingRegistry.ISettings;
   let serverSettings: Git.IServerSettings;
+  let docmanager: IDocumentManager;
   // Get a reference to the default file browser extension
   const filebrowser = factory.defaultBrowser;
   console.log(`filebrowser.node.baseURI is ${filebrowser.node.baseURI}`);
@@ -163,9 +169,6 @@ async function activate(
 
   // Provided we were able to load application settings, create the extension widgets
   if (settings) {
-    // Add JupyterLab commands
-    addCommands(app, gitExtension, factory.defaultBrowser, settings, trans);
-
     // Create the Git widget sidebar
     const gitPlugin = new GitWidget(
       gitExtension,
@@ -177,6 +180,9 @@ async function activate(
     gitPlugin.id = 'jp-git-sessions';
     gitPlugin.title.icon = gitIcon;
     gitPlugin.title.caption = 'Git';
+
+    // Add JupyterLab commands
+    addCommands(app, gitExtension, factory.defaultBrowser, settings, notebookTracker, trans);
 
     // Let the application restorer track the running panel for restoration of
     // application state (e.g. setting the running panel as the current side bar
@@ -203,11 +209,6 @@ async function activate(
       app.commands,
       app.contextMenu
     );
-    // testing
-    console.log(`status.ahead is ${gitExtension.status.ahead}`);
-    console.log(`status.behind is ${gitExtension.status.behind}`);
-    console.log(`status.branch is ${gitExtension.status.branch}`);
-    console.log(`status.remote is ${gitExtension.status.remote}`);
 
     // *********
     // guess n chek to find list of all files
