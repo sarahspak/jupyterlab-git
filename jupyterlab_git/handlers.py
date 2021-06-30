@@ -278,6 +278,27 @@ class GitBranchDeleteHandler(GitHandler):
             self.set_status(204)
 
 
+class GitAddTC4MLHandler(GitHandler):
+    """
+    Handler for git add <filename>'.
+    Adds one or all files to the staging area.
+    """
+
+    @tornado.web.authenticated
+    async def post(self):
+        """
+        POST request handler, adds individual files into the staging area.
+        """
+        data = self.get_json_body()
+        top_repo_path = data["top_repo_path"]
+        filename = data["filename"]
+        body = await self.git.add_tc4ml(filename, top_repo_path)
+
+        if body["code"] != 0:
+            self.set_status(500)
+        self.finish(json.dumps(body))
+
+
 class GitAddHandler(GitHandler):
     """
     Handler for git add <filename>'.
@@ -409,6 +430,27 @@ class GitResetToCommitHandler(GitHandler):
         top_repo_path = data["top_repo_path"]
         commit_id = data["commit_id"]
         body = await self.git.reset_to_commit(commit_id, top_repo_path)
+
+        if body["code"] != 0:
+            self.set_status(500)
+        self.finish(json.dumps(body))
+
+
+class GitGetRemoteURLHandler(GitHandler):
+    """
+    Handler for Git remote url.
+    """
+
+    @tornado.web.authenticated
+    async def post(self):
+        """
+        GET request handler?
+        """
+        data = self.get_json_body()
+        top_repo_path = data["top_repo_path"]
+        commit_sha = data["commit_id"]
+        filename = data["filename"]
+        body = await self.git.get_remote_url(commit_sha, filename, top_repo_path)
 
         if body["code"] != 0:
             self.set_status(500)
@@ -842,6 +884,7 @@ def setup_handlers(web_app):
 
     git_handlers = [
         ("/git/add", GitAddHandler),
+        ("/git/add_tc4ml", GitAddTC4MLHandler),
         ("/git/add_all_unstaged", GitAddAllUnstagedHandler),
         ("/git/add_all_untracked", GitAddAllUntrackedHandler),
         ("/git/all_history", GitAllHistoryHandler),
@@ -876,6 +919,7 @@ def setup_handlers(web_app):
         ("/git/ignore", GitIgnoreHandler),
         ("/git/tags", GitTagHandler),
         ("/git/tag_checkout", GitTagCheckoutHandler),
+        ("/git/get_remote_url", GitGetRemoteURLHandler),
     ]
 
     # add the baseurl to our paths

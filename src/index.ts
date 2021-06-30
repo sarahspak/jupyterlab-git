@@ -2,6 +2,7 @@ import {
   ILabShell,
   ILayoutRestorer,
   JupyterFrontEnd,
+  IConnectionLost,
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { Dialog, showErrorMessage, Toolbar } from '@jupyterlab/apputils';
@@ -34,9 +35,6 @@ export { NotebookDiff } from './components/diff/NotebookDiff';
 export { PlainTextDiff } from './components/diff/PlainTextDiff';
 export { DiffModel } from './components/diff/model';
 export { Git, IGitExtension } from './tokens';
-// import { toArray } from '@lumino/algorithm';
-// import { Contents } from '@jupyterlab/services';
-// import { Toolbar } from './widgets/Toolbar';
 
 /**
  * The default running sessions extension.
@@ -53,6 +51,7 @@ const plugin: JupyterFrontEndPlugin<IGitExtension> = {
     IStatusBar,
     ILabShell,
     INotebookTracker,
+    IConnectionLost,
     ITranslator
   ],
   provides: IGitExtension,
@@ -79,6 +78,7 @@ async function activate(
   statusBar: IStatusBar,
   labShell: ILabShell,
   notebookTracker: INotebookTracker,
+  connectionLost: IConnectionLost | null,
   translator?: ITranslator
 ): Promise<IGitExtension> {
   let gitExtension: GitExtension | null = null;
@@ -87,7 +87,6 @@ async function activate(
   let docmanager: IDocumentManager;
   // Get a reference to the default file browser extension
   const filebrowser = factory.defaultBrowser;
-  console.log(`filebrowser.node.baseURI is ${filebrowser.node.baseURI}`);
   translator = translator || nullTranslator;
   const trans = translator.load('jupyterlab-git');
 
@@ -149,7 +148,8 @@ async function activate(
     app.docRegistry,
     settings
   );
-  console.log(`serverSettings.serverRoot is ${serverSettings.serverRoot}`);
+
+  const serverRoot = serverSettings.serverRoot;
 
   // Whenever we restore the application, sync the Git extension path
   Promise.all([app.restored, filebrowser.model.restored]).then(() => {
@@ -180,9 +180,9 @@ async function activate(
     gitPlugin.id = 'jp-git-sessions';
     gitPlugin.title.icon = gitIcon;
     gitPlugin.title.caption = 'Git';
-
+    
     // Add JupyterLab commands
-    addCommands(app, gitExtension, factory.defaultBrowser, settings, notebookTracker, trans);
+    addCommands(app, gitExtension, filebrowser, settings, notebookTracker, connectionLost, serverRoot, trans);
 
     // Let the application restorer track the running panel for restoration of
     // application state (e.g. setting the running panel as the current side bar

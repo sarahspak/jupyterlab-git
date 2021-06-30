@@ -787,6 +787,39 @@ class Git:
             return {"code": code, "command": " ".join(cmd), "message": error}
         return {"code": code}
 
+    async def get_remote_url(self, commit_sha, filename, top_repo_path):
+        """
+        Execute git ls-remote --get-url, get the result back, clean output and combine w/ commit_sha
+        Requires that you first push to master and use gitModel.currentBranch.top_commit
+        """
+        cmd = ["git", "ls-remote", "--get-url"]
+        # todo - will this only ever be one output? I'm assuming that's the case
+        code, output, error = await execute(cmd, cwd=top_repo_path)
+
+        response = {"code": code, "command": " ".join(cmd)}
+
+        if code != 0:
+            response["message"] = error
+        else:
+            response["top_level_repo_url"] = (
+                output.replace("git@", "").replace(":", "/").rstrip(".git")
+            )
+            response["final_url"] = (
+                str(response["top_level_repo_url"]) + f"/blob/{commit_sha}/{filename}"
+            )
+        return response
+
+    async def add_tc4ml(self, filename, top_repo_path):
+        """
+        Execute git add<filename> command & return the result.
+        """
+        cmd = ["git", "add", filename]
+        code, _, error = await execute(cmd, cwd=top_repo_path)
+
+        if code != 0:
+            return {"code": code, "command": " ".join(cmd), "message": error}
+        return {"code": code}
+
     async def add_all(self, top_repo_path):
         """
         Execute git add all command & return the result.

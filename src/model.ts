@@ -1,6 +1,7 @@
 import { IChangedArgs, PathExt } from '@jupyterlab/coreutils';
 import { IDocumentManager } from '@jupyterlab/docmanager';
 import { DocumentRegistry } from '@jupyterlab/docregistry';
+// import { FilenameSearcher } from '@jupyterlab/filebrowser';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { JSONObject } from '@lumino/coreutils';
 import { Poll } from '@lumino/polling';
@@ -740,6 +741,27 @@ export class GitExtension implements IGitExtension {
       });
     }
 
+    /**
+   * FOR TESTING ONLY - SHOW A GIT DIALOG
+   *
+   * @param auth - remote authentication information
+   * @returns promise which resolves upon fetching changes
+   *
+   * @throws {Git.NotInRepository} If the current path is not a Git repository
+   * @throws {Git.GitResponseError} If the server response is not ok
+   * @throws {ServerConnection.NetworkError} If the request cannot be made
+   */
+     async get_remote_url(
+      commit_sha: string,
+      filename: string,
+    ): Promise<Git.IChangedFilesResult> {
+      // const files_output = (await this._changedFiles('WORKING', 'HEAD')).files;
+      return await requestAPI<Git.IChangedFilesResult>('get_remote_url', 'POST', {
+        commit_sha: commit_sha,
+        current_path: this.pathRepository, 
+        filename: filename,
+      });
+    }
 
     /**
    * FOR TESTING ONLY - RETURN A LIST OF ALL CHANGED FILES
@@ -756,6 +778,42 @@ export class GitExtension implements IGitExtension {
       current_path: this.pathRepository
       });
     }
+
+  /**
+   * FOR TESTING ONLY - Add one or more files to the repository staging area.
+   * COPIED FROM ASYNC ADD()
+   *
+   *
+   * @param filename - files to add
+   * @returns promise which resolves upon adding files to the repository staging area
+   *
+   * @throws {Git.NotInRepository} If the current path is not a Git repository
+   * @throws {Git.GitResponseError} If the server response is not ok
+   * @throws {ServerConnection.NetworkError} If the request cannot be made
+   */
+   async add_tc4ml(filename: string): Promise<void> {
+    const path = await this._getPathRepository();
+    await this._taskHandler.execute<void>('git:add:files', async () => {
+      await requestAPI<void>('add', 'POST', {
+        add_all: !filename,
+        filename: filename || '',
+        top_repo_path: path
+      });
+    });
+    await this.refreshStatus();
+  }
+  // async add_tc4ml(filename: string): Promise<void> {
+  //   const path = await this._getPathRepository();
+  //   await this._taskHandler.execute<void>('git:add_tc4ml', async () => {
+  //     await requestAPI<void>('add_tc4ml', 'POST', {
+  //       filename: filename || '',
+  //       top_repo_path: path
+  //     });
+  //   });
+  //   await this.refreshStatus();
+  // }
+
+
 
   /**
    * Push local changes to a remote repository.

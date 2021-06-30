@@ -970,9 +970,12 @@ export enum CommandIDs {
   gitPull = 'git:pull',
   gitSubmitCommand = 'git:submit-commit',
   gitShowDiff = 'git:show-diff',
+  // SP additions
   gitShowDialog = 'git:show-dialog',
   gitGetAllFiles = 'git:show-all-files',
   tc4ml = "git:tc4ml", 
+  add_tc4ml = "git:add_tc4ml",
   saveNotebook = "git:saveNotebook",
-  runMultipleCommands = "git:run-multiple-commands"
+  runMultipleCommands = "git:run-multiple-commands",
+  getCellMetadata = "git:getCellMetadata"
 }

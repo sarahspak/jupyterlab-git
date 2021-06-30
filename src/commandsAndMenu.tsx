@@ -1,14 +1,23 @@
 import {
-  JupyterFrontEnd
-  // ,Router
+  JupyterFrontEnd,
+  ConnectionLost,
+  IConnectionLost
 } from '@jupyterlab/application';
-import { 
-  KernelManager,
-  KernelSpecManager,
-  // KernelMessage, 
-  SessionManager } from '@jupyterlab/services';
-import { SessionContext } from '@jupyterlab/apputils';
-
+import {
+  NotebookActions,
+  NotebookPanel,
+  NotebookTrustStatus
+} from '@jupyterlab/notebook';
+// import {
+// KernelManager,
+// KernelSpecManager,
+// KernelMessage,
+// SessionManager,
+//   ServerConnection,
+//   ServiceManager
+//  } from '@jupyterlab/services';
+// import { SessionContext } from '@jupyterlab/apputils';
+import { ICodeCellModel } from '@jupyterlab/cells';
 import {
   Dialog,
   InputDialog,
@@ -19,21 +28,23 @@ import {
   ToolbarButton,
   WidgetTracker
 } from '@jupyterlab/apputils';
+
 // import { IDocumentManager } from '@jupyterlab/docmanager';
 import { PathExt } from '@jupyterlab/coreutils';
 import { FileBrowser } from '@jupyterlab/filebrowser';
 import { Contents } from '@jupyterlab/services';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { ITerminal } from '@jupyterlab/terminal';
-import { TranslationBundle } from '@jupyterlab/translation';
+import {
+  TranslationBundle
+  // TranslationManager, ITranslator
+} from '@jupyterlab/translation';
 import { closeIcon, ContextMenuSvg } from '@jupyterlab/ui-components';
 import { ArrayExt, toArray } from '@lumino/algorithm';
 import { CommandRegistry } from '@lumino/commands';
 import { PromiseDelegate } from '@lumino/coreutils';
 import { Message } from '@lumino/messaging';
-import {
-  Menu,
-  Panel} from '@lumino/widgets';
+import { Menu, Panel } from '@lumino/widgets';
 import { INotebookTracker, INotebookModel } from '@jupyterlab/notebook';
 import * as React from 'react';
 import { DiffModel } from './components/diff/model';
@@ -60,8 +71,6 @@ import {
 import { GitCredentialsForm } from './widgets/CredentialsBox';
 import { GitCloneForm } from './widgets/GitCloneForm';
 import { DocumentRegistry } from '@jupyterlab/docregistry';
-// import { GitWidget } from './widgets/GitWidget';
-// import { DocumentRegistry } from '@jupyterlab/docregistry';
 
 interface IGitCloneArgs {
   /**
@@ -123,6 +132,8 @@ export function addCommands(
   fileBrowser: FileBrowser,
   settings: ISettingRegistry.ISettings,
   notebookTracker: INotebookTracker,
+  connectionLost: IConnectionLost | null,
+  serverRoot: string,
   trans: TranslationBundle
 ): void {
   const { commands, shell } = app;
@@ -434,70 +445,165 @@ export function addCommands(
     }
   });
 
-  function saveDocument(
-    context: DocumentRegistry.IContext<INotebookModel>
-  ): void {
-    context
-      .save()
-      .then(() => {
-        logger.log({
-          message: trans.__(`Successfully saved ${context.path}`),
-          level: Level.SUCCESS
-        });
-      })
-      .catch(reason => {
-        logger.log({
-          message: `Error saving: ${context.path}`,
-          level: Level.ERROR,
-          error: reason
-        });
-      });
-  }
-
-  commands.addCommand(CommandIDs.saveNotebook, {
-    label: trans.__('Save the currently open notebook'),
-    caption: trans.__('save currently open notebook'),
-    isEnabled: () => gitModel.pathRepository !== null,
+  commands.addCommand(CommandIDs.getCellMetadata, {
+    label: trans.__('Get cell metadata of currently open notebook'),
+    caption: trans.__('Get cell metadata of currently open notebook'),
     execute: async () => {
-      logger.log({
-        level: Level.RUNNING,
-        message: trans.__('saving current notebook...')
-      });
-      try {
-        // TODO: add in check that we are in the right notebook (not in requirements.txt by accident)
-        // todo: restart and run all cells
-        // wait until it's done and then save
-
-        // STEP 1 - SET UP WIDGET / wait for it to not be null
-        (async () => {
-          while (!notebookTracker.currentWidget)
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          console.log('notebooktracker.currentWidget is defined');
-          console.log('context path is ');
-          console.log(notebookTracker.currentWidget.context.path);
-          console.log('localpath is ');
-          console.log(notebookTracker.currentWidget.context.localPath);
-          // STEP 3 - USE WIDGET TO SAVE
-          const context = notebookTracker.currentWidget.context;
-          saveDocument(context);
-        })();
-      } catch (error) {
-        console.error(
-          'Encountered an error when trying to save. Error: ',
-          error
-        );
-        logger.log({
-          message: trans.__('Failed to save'),
-          level: Level.ERROR,
-          error
-        });
-      }
+      const results = await Private.getCellMetadata();
+      console.log(results);
     }
   });
 
+  commands.addCommand(CommandIDs.saveNotebook, {
+    label: trans.__('Save + git add/commit/push current notebook'),
+    caption: trans.__('Save and git add currently open notebook'),
+    isEnabled: () => gitModel.pathRepository !== null,
+    execute: async () => {
+      // STEP 1 - restart all and save
+      const restart = await commands.execute('runmenu:restart-and-run-all');
+      if (!restart) {
+        return;
+      }
+      // constantly check the kernel connection status
+      // also constantly check that all cells in the notebook have an executionCount
+      while (!Private.checkKernelConnection(connectionLost, app)) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      // }
 
+      if (Private.checkKernelConnection(connectionLost, app)) {
+        console.log('wow the kernel is connected again!');
+      }
+      // need to enter a pause?
+      const result = await showDialog({
+        title: 'Restart complete',
+        body: 'Do you wish to save and push this notebook to GHE?',
+        buttons: [
+          Dialog.cancelButton({ label: trans.__('Cancel') }),
+          Dialog.okButton({ label: trans.__('Yes') })
+        ]
+      });
+
+      if (result.button.accept) {
+        // STEP 2 - USE WIDGET TO SAVE
+        logger.log({
+          level: Level.RUNNING,
+          message: trans.__('Running command to save current notebook...')
+        });
+        try {
+          while (!notebookTracker.currentWidget)
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+          const context = notebookTracker.currentWidget.context;
+          const item = new NotebookTrustStatus();
+          // Keep the status item up-to-date with the current notebook.
+          notebookTracker.currentChanged.connect(() => {
+            const current = notebookTracker.currentWidget;
+            item.model.notebook = current && current.content;
+          });
+
+          const current = Private.getCurrent(notebookTracker, shell);
+          const currentPath = current.context.path;
+          const repoPath = gitModel.pathRepository;
+          const fullFileName = repoPath.concat('/').concat(currentPath);
+          await Private.saveNb(
+            gitModel,
+            fullFileName,
+            currentPath,
+            commands,
+            context
+          );
+          logger.log({
+            level: Level.SUCCESS,
+            message: 'Complete!'
+          });
+        } catch (error) {
+          console.error(
+            'Encountered an error when trying to save. Error: ',
+            error
+          );
+          logger.log({
+            message: trans.__('Failed to save'),
+            level: Level.ERROR,
+            error
+          });
+        }
+      }
+
+      // step 4 - commit
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('starting git commit...')
+      });
+      const tryCommit = await Private.gitCommit(gitModel);
+      if (!tryCommit) {
+        console.log('something went wrong w/ the commit');
+        logger.log({
+          level: Level.ERROR,
+          message: 'Commit failed'
+        });
+      } else {
+        console.log('we successfully committed!');
+        logger.log({
+          level: Level.SUCCESS,
+          message: 'Commit is complete'
+        });
+      }
+
+      // step 5 - push
+      console.log('can we even do this git push thing?');
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('starting git push...')
+      });
+      const current = Private.getCurrent(notebookTracker, shell);
+      return showDialog({
+        title: 'Git Push',
+        body: (
+          <span>
+            {'About to push this notebook to the branch below'}
+            {current.context.path}
+          </span>
+        ),
+        buttons: [
+          Dialog.cancelButton({ label: trans.__('Cancel') }),
+          Dialog.okButton({ label: trans.__('Yes') })
+        ]
+      }).then(async result => {
+        if (result.button.accept) {
+          try {
+            console.log('starting git push');
+            const gitPushResults = await commands.execute('git:push');
+            if (!gitPushResults) {
+              console.log('error');
+              logger.log({
+                level: Level.ERROR,
+                message: 'Git push failed'
+              });
+            } else {
+              console.log('we successfully pushed!');
+              logger.log({
+                level: Level.SUCCESS,
+                message: 'Git push is complete'
+              });
+            }
+          } catch (error) {
+            console.log('something went wrong w/ the commit');
+            logger.log({
+              level: Level.ERROR,
+              message: 'Commit failed'
+            });
+          }
+        }
+      });
+    }
+  });
+
+  // ************************************************************************
+  //  start here
+  // ************************************************************************
   commands.addCommand(CommandIDs.runMultipleCommands, {
-    label: "Run multiple commands",
+    label: 'Run multiple commands',
     execute: async args => {
       const commandsString: string[] = args.commands as string[];
       for (let i = 0; i < commandsString.length; i++) {
@@ -508,10 +614,8 @@ export function addCommands(
     }
   });
 
-
-
   commands.addCommand(CommandIDs.tc4ml, {
-    label: trans.__('Run TC4ML'),
+    label: trans.__('restart-run-all+save'),
     caption: trans.__('tc4ml test'),
     isEnabled: () => gitModel.pathRepository !== null,
     execute: async args => {
@@ -520,161 +624,114 @@ export function addCommands(
         message: trans.__('going to run tc4ml steps...')
       });
 
-      // startup session
-      const kernelManager = new KernelManager();
-      const specsManager = new KernelSpecManager();
-      const sessionManager = new SessionManager({ kernelManager });
-      const sessionContext = new SessionContext({
-        sessionManager,
-        specsManager,
-        name: 'tc4mlSessionContext'
-      });
-      
-
-      // kernelDisplayStatus
-      
-      function waitForKernelConnectedMessage() {
-        try {
-          const status = sessionContext.kernelDisplayStatus;
-          console.log(status)
-          console.log("inside try")
-        
-        if (status != "connected") {
-          setTimeout(waitForKernelConnectedMessage,1000) 
-          console.log("still waiting for kernel")
-          console.log(status);
-          
-        }
-        
-         else {
-          console.log("kernel is now connected!!")
-        }
-        return console.log("kernel is now connected!!")
-      } catch (e) {
-        console.log(sessionContext.kernelDisplayStatus)
-        console.log(e)
-        console.log("error ")
-      }
-    }
-      waitForKernelConnectedMessage
       // step 1: run restart-kernel and run all
-      // TODO need a better way of handling this if it fails
-      // also need to figure out what to do if the kernel fails to
-      //  finish running all the way thru
-    
-    const restartAndRunAll: Promise<any> = await commands.execute('runmenu:restart-and-run-all');
-    logger.log({
-      level: Level.RUNNING,
-      message: trans.__('Restarting kernel...')
-      });
-      console.log(sessionContext.kernelDisplayStatus);
-    try {
-      if (restartAndRunAll) {
-        waitForKernelConnectedMessage
+      const restart = await commands.execute('runmenu:restart-and-run-all');
+      if (restart) {
+        console.log(restart);
+        console.log('restart');
+      } else {
+        return;
+      }
+      // constantly check the kernel connection status
+      // also constantly check that all cells in the notebook have an executionCount
+      var attempts = 10;
+      for (let i = 0; i < attempts; i++) {
+        while (!Private.checkKernelConnection(connectionLost, app)) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
+      if (Private.checkKernelConnection(connectionLost, app)) {
+        console.log('wow the kernel is connected again!');
         logger.log({
           level: Level.SUCCESS,
           message: trans.__('succesfully restarted and ran kernel...')
         });
-        
+        return;
       }
-      return
-    } catch (error) {
-        console.error(error);
+
+      // step 2: save notebook
+      console.log('starting step 2 - saving notebook!');
+      // const saveNotebook: Promise<any> = await commands.execute('git:saveNotebook');
+      console.log('starting git save notebook');
+      await commands.execute('git:saveNotebook');
+
+      console.log('context being defined again');
+      const context = notebookTracker.currentWidget.context;
+      while (!notebookTracker.currentWidget)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log('ok, notebooktracker.currentWidget exists and is defined');
+
+      const notebookName = representFilesEasy(
+        notebookTracker.currentWidget.title.label
+      );
+      const result = await showDialog({
+        title: 'Save current notebook',
+        body: (
+          <span>
+            {trans.__('Would you like to save the following file or files?')}
+            {notebookName}
+          </span>
+        ),
+        buttons: [
+          Dialog.cancelButton({ label: trans.__('Cancel') }),
+          Dialog.okButton({ label: trans.__('Save') })
+        ]
+      });
+      if (result.button.accept) {
         logger.log({
-          level: Level.ERROR,
-          message: trans.__(`error ${error}`),
-          error
-        })
-      }
-    // wait until kernel is back?
-    // KernelMessage.
-    // let KernelMessage = new KernelMessage;
-    // keep trying to connect w/ kernel? 
-    console.log(sessionContext.kernelDisplayStatus);
-    
-    console.log("all done with restarting kernel");
-
-
-    // step 2: save notebook
-    console.log("starting step 2 - saving notebook!");
-    const saveNotebook: Promise<any> = await commands.execute('git:saveNotebook');
-    
-    while (!notebookTracker.currentWidget)
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log('ok, notebooktracker.currentWidget exists and is defined')
-
-    const notebookName = representFilesEasy(notebookTracker.currentWidget.title.label);  
-    const result = await showDialog({
-      title: trans.__('Save current notebook'),
-      body: (
-        <span>
-          {trans.__(
-            'Would you like to save the following file or files?'
-          )}
-          {notebookName}
-        </span>
-      ),
-      buttons: [
-        Dialog.cancelButton({ label: trans.__('Cancel') }),
-        Dialog.okButton({ label: trans.__('Save') })
-      ]
-    });
-    if (result.button.accept) {
-      logger.log({
-        level: Level.RUNNING,
-        message: trans.__('Saving current notebook...')});
-      try {
-        if (saveNotebook) {
+          level: Level.RUNNING,
+          message: trans.__('Saving current notebook...')
+        });
+        try {
+          if (!context.model.dirty) {
+            logger.log({
+              level: Level.SUCCESS,
+              message: trans.__('succesfully saved current notebook...')
+            });
+            return;
+          }
+          return;
+        } catch (error) {
+          console.error(error);
           logger.log({
-            level: Level.SUCCESS,
-            message: trans.__('succesfully saved current notebook...')
+            level: Level.ERROR,
+            message: trans.__(`error in saving current notebook ${error}`),
+            error
           });
         }
-        return 
-      } catch (error) {
-        console.error(error);
+      } else {
         logger.log({
           level: Level.ERROR,
-          message: trans.__(`error in saving current notebook ${error}`),
-          error
-        })
+          message: trans.__('Failed to save notebook - dialog crashed...')
+        });
       }
-    } else {
-      logger.log({
-        level: Level.ERROR,
-        message: trans.__('Failed to save notebook - dialog crashed...')});
     }
-  }
-});
+  });
 
+  // step 3: save
 
+  // const main = (await commands.execute(
+  //   'terminal:create-new',
+  //   args
+  // )) as MainAreaWidget<ITerminal.ITerminal>;
 
-      // step 3: save 
+  // try {
+  //   if (gitModel.pathRepository !== null) {
+  //     const terminal = main.content;
+  //     terminal.session.send({
+  //       type: 'stdin',
+  //       content: [
+  //         `cd "${gitModel.pathRepository.split('"').join('\\"')}"\n`
+  //       ]
+  //     });
+  //   }
 
-      
-      // const main = (await commands.execute(
-      //   'terminal:create-new',
-      //   args
-      // )) as MainAreaWidget<ITerminal.ITerminal>;
-
-      // try {
-      //   if (gitModel.pathRepository !== null) {
-      //     const terminal = main.content;
-      //     terminal.session.send({
-      //       type: 'stdin',
-      //       content: [
-      //         `cd "${gitModel.pathRepository.split('"').join('\\"')}"\n`
-      //       ]
-      //     });
-      //   }
-
-      //   return main;
-      // } catch (e) {
-      //   console.error(e);
-      //   main.dispose();
-      // }
-
-
+  //   return main;
+  // } catch (e) {
+  //   console.error(e);
+  //   main.dispose();
+  // }
 
   /** Add test SHOW MENU COMMAND */
   commands.addCommand(CommandIDs.gitShowDialog, {
@@ -694,7 +751,6 @@ export function addCommands(
           'Select the files you want to commit',
           [Dialog.okButton({ label: 'Okay' }), Dialog.cancelButton()]
         );
-
         logger.log({
           message: trans.__('Successfully showed dialog!!!'),
           level: Level.SUCCESS,
@@ -716,7 +772,7 @@ export function addCommands(
 
   /** Add test TO ONLY SHOW CURRENT FILE` */
   commands.addCommand(CommandIDs.gitGetAllFiles, {
-    label: trans.__('Git push our current file'),
+    label: trans.__('Git get current file test'),
     caption: trans.__('Git current file test'),
     isEnabled: () => gitModel.pathRepository !== null,
     execute: async () => {
@@ -739,7 +795,6 @@ export function addCommands(
           [Dialog.okButton({ label: 'Okay' }), Dialog.cancelButton()],
           notebookTracker
         );
-
         logger.log({
           message: trans.__('Successfully showed dialog!!!'),
           level: Level.SUCCESS,
@@ -1250,7 +1305,7 @@ export function addCommands(
  * Adds commands and menu items.
  *
  * @param commands - Jupyter App commands registry
- *  @param trans - language translator
+ * @param trans - language translator
  * @returns menu
  */
 export function createGitMenu(
@@ -1274,7 +1329,8 @@ export function createGitMenu(
     // CommandIDs.gitPush,
     // CommandIDs.gitPull,
     CommandIDs.gitShowDialog,
-    CommandIDs.gitGetAllFiles,
+    // CommandIDs.gitGetAllFiles,
+    CommandIDs.getCellMetadata
     // CommandIDs.tc4ml,
     // CommandIDs.saveNotebook
   ].forEach(command => {
@@ -1761,6 +1817,311 @@ namespace Private {
       throw error;
     }
   }
-}
 
+  export async function gitCommit(model: GitExtension): Promise<boolean> {
+    let commitMsg = '';
+    // todo; try to find some way of making the commit box enforce good behavior
+    try {
+      const result = await InputDialog.getText({
+        title: 'Enter a commit message',
+        placeholder:
+          'Why is this change necessary? How does this commit address the issue? What effects does this change have?'
+      });
+      if (result.button.accept) {
+        commitMsg = result.value;
+        console.log(`The commit message you entered was "${commitMsg}"`);
+      }
+    } catch (error) {
+      console.error(error);
+      logger.log({
+        message: 'No commit message!',
+        level: Level.ERROR,
+        error
+      });
+      return false;
+    }
+
+    if (commitMsg) {
+      try {
+        await model.commit(commitMsg);
+      } catch (error) {
+        console.error(error);
+        showErrorMessage('Error when commiting torepository', error);
+        return false;
+      }
+    }
+    console.log('success! we committed');
+    return true;
+  }
+
+  export async function gitGetURL(
+    model: GitExtension,
+    commit_sha: string,
+    file_name: string
+  ): Promise<void> {
+    model.get_remote_url(commit_sha, file_name);
+  }
+
+  /**
+   * Handle Git add
+   * @private
+   * @param model - Git extension model
+   * @param operation - Git operation name
+   * @param args - Files to add
+   * @param trans - language translator
+   * @param retry - Is this operation retried?
+   * @returns Promise for displaying a dialog
+   */
+
+  export async function gitAddWithBranching(
+    model: GitExtension,
+    long_filename: string,
+    short_filename: string,
+    retry = false
+  ): Promise<void> {
+    try {
+      // Git add action
+      const modelAddFile = () => model.add_tc4ml(short_filename);
+      if (model.currentBranch) {
+        const currBranchName = model.currentBranch.name;
+        const currBranchTopCommit = model.currentBranch.top_commit;
+        console.log(currBranchName);
+        console.log(currBranchTopCommit);
+      }
+
+      const body = (
+        <div>
+          {
+            'Do you want to add changes from this notebook to your current branch?'
+          }
+          <br />
+          <pre>{short_filename}</pre>
+          <br />
+          {'current branch'}
+          <br />
+        </div>
+      );
+      void showDialog({
+        title: 'Git Add',
+        body,
+        buttons: [
+          Dialog.cancelButton(),
+          Dialog.warnButton({
+            label: 'Change Branch',
+            actions: ['change_branch']
+          }),
+          Dialog.warnButton({
+            label: 'Make New Branch',
+            actions: ['checkout']
+          }),
+          Dialog.okButton({ label: 'Yes' })
+        ]
+      }).then(async ({ button: { accept, actions } }) => {
+        if (accept) {
+          modelAddFile();
+        } else if (actions.includes('checkout')) {
+          let newBranchName = '';
+          try {
+            const nowdate = new Date();
+            const newBranchDialogResult = await InputDialog.getText({
+              title: 'Please name your new branch',
+              placeholder: `scienceboxcloud-${nowdate}`
+            });
+            if (newBranchDialogResult.button.accept) {
+              newBranchName = newBranchDialogResult.value;
+              console.log(
+                `The new branch you want to create is "${newBranchName}"`
+              );
+            }
+          } catch (error) {
+            console.error(error);
+            logger.log({
+              message: 'missing new branch name!',
+              level: Level.ERROR,
+              error
+            });
+            return false;
+          }
+          // create new branch!
+          if (newBranchName) {
+            // first create the data w/ right interface
+            const file_name_checkout: Git.ICheckoutOptions = {
+              branchname: newBranchName,
+              newBranch: true,
+              startpoint: '',
+              filename: short_filename
+            };
+            try {
+              const makeNewBranchResult = await model.checkout(
+                file_name_checkout
+              );
+              if (makeNewBranchResult) {
+                console.log('success! branch has been created');
+                return true;
+              }
+            } catch (error) {
+              logger.log({
+                message: 'branch could not be created!',
+                level: Level.ERROR,
+                error
+              });
+              return false;
+            }
+          }
+        } else if (actions.includes('change_branch')) {
+          // model.branches
+          // TODO
+          return;
+        } else if (!accept) {
+          undefined;
+        }
+      });
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * If the editor is in a dirty state, remind user to save, else don't bother
+   */
+  export async function saveNb(
+    model: GitExtension,
+    fullFileName: string,
+    shorterFileName: string,
+    commands: CommandRegistry,
+    context: DocumentRegistry.IContext<INotebookModel>
+  ): Promise<void> {
+    if (!context.model.dirty) {
+      return showDialog({
+        title: 'Git adding current notebook to current branch.',
+        body: 'Do you want to add this notebook to your current branch?',
+        buttons: [
+          Dialog.cancelButton({ label: 'Cancel' }),
+          Dialog.okButton({ label: 'Proceed' })
+        ]
+      }).then(async result => {
+        if (result.button.accept) {
+          try {
+            console.log('starting git add');
+            await gitAddWithBranching(model, fullFileName, shorterFileName);
+            console.log('complete - successfully added');
+            logger.log({
+              level: Level.SUCCESS,
+              message: 'Git add complete'
+            });
+            return;
+          } catch (error) {
+            logger.log({
+              level: Level.ERROR,
+              message: 'Git add failed',
+              error
+            });
+            throw error;
+          }
+        } else {
+          return;
+        }
+      });
+    }
+    return showDialog({
+      title: 'You have unsaved changes.',
+      body: 'Do you want to save before proceeding to push to GHE?',
+      buttons: [
+        Dialog.cancelButton({ label: 'No, proceed without saving' }),
+        Dialog.okButton({ label: 'Save' })
+      ]
+    }).then(async result => {
+      if (result.button.accept) {
+        try {
+          commands.execute('docmanager:save');
+          console.log('saving file now!!!');
+          gitAddWithBranching(model, fullFileName, shorterFileName);
+        } catch (error) {
+          throw error;
+        }
+      } else if (!result.button.accept) {
+        try {
+          await gitAddWithBranching(model, fullFileName, shorterFileName);
+          console.log('succesfully git added');
+        } catch (error) {
+          throw error;
+        }
+      }
+      return;
+    });
+  }
+
+  export async function oldSaveFunction(
+    context: DocumentRegistry.IContext<INotebookModel>
+  ): Promise<void> {
+    context
+      .save()
+      .then(() => {
+        logger.log({
+          message: `Successfully saved ${context.path}`,
+          level: Level.SUCCESS
+        });
+      })
+      .catch(reason => {
+        logger.log({
+          message: `Error saving: ${context.path}`,
+          level: Level.ERROR,
+          error: reason
+        });
+      });
+  }
+
+  export async function getCellMetadata(): Promise<any> {
+    let cellNumberType = 'cell_index';
+    console.log('inside getcellmeta');
+    NotebookActions.executed.connect((_, args) => {
+      console.log('incide notebookactions');
+      const { cell, notebook } = args;
+      const codeCell = cell.model.type === 'code';
+      const nonEmptyCell = cell.model.value.text.length > 0;
+      if (codeCell && nonEmptyCell) {
+        const codeCellModel = cell.model as ICodeCellModel;
+        const cellNumber =
+          cellNumberType === 'cell_index'
+            ? notebook.activeCellIndex
+            : codeCellModel.executionCount;
+        console.log(cellNumber);
+        console.log(notebook.activeCellIndex);
+        console.log(codeCellModel.executionCount);
+        const notebookName = notebook.title.label.replace(/\.[^/.]+$/, '');
+        console.log(notebookName);
+        console.log('is the notebookName');
+        console.log(cell);
+      }
+    });
+  }
+
+  export async function checkKernelConnection(
+    connectionLost: IConnectionLost,
+    app: JupyterFrontEnd
+  ): Promise<any> {
+    connectionLost = connectionLost || ConnectionLost;
+    console.log(connectionLost);
+    console.log('connectionLost');
+    const checkKernel = await app.serviceManager.connectionFailure.connect(
+      (manager, error) => connectionLost!(manager, error)
+    );
+    if (checkKernel) {
+      return;
+    } else return;
+  }
+  // Get the current widget and activate unless the args specify otherwise.
+  export function getCurrent(
+    tracker: INotebookTracker,
+    shell: JupyterFrontEnd.IShell
+  ): NotebookPanel | null {
+    const widget = tracker.currentWidget;
+
+    if (widget) {
+      shell.activateById(widget.id);
+    }
+
+    return widget;
+  }
+}
 /* eslint-enable no-inner-declarations */
