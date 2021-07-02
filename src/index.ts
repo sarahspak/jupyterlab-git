@@ -99,7 +99,10 @@ async function activate(
   try {
     serverSettings = await getServerSettings(trans);
     const { frontendVersion, gitVersion, serverVersion } = serverSettings;
-
+    console.log(frontendVersion);
+    console.log(gitVersion);
+    console.log(serverVersion);
+    console.log(serverSettings);
     // Version validation
     if (!gitVersion) {
       throw new Error(
@@ -180,9 +183,77 @@ async function activate(
     gitPlugin.id = 'jp-git-sessions';
     gitPlugin.title.icon = gitIcon;
     gitPlugin.title.caption = 'Git';
-    
+
+    console.log(`is gitExtension.isready? ${gitExtension.isReady}`);
+    console.log(
+      `is gitExtension.refreshStandbyCondition ready? ${gitExtension.refreshStandbyCondition()}`
+    );
+
+    console.log(`is gitExtension.ready? ${gitExtension.ready}`);
+    var today = new Date();
+    var date =
+      today.getFullYear() +
+      '-' +
+      (today.getMonth() + 1) +
+      '-' +
+      today.getDate() +
+      ' ' +
+      today.getHours() +
+      ':' +
+      today.getMinutes() +
+      ':' +
+      today.getSeconds() +
+      ':' +
+      today.getMilliseconds();
+    console.log(`testing with ${date}`);
+
+    // # guess and check a number of different conditions here
+    // gitExtension.refreshBranch().then(() => {
+    // gitExtension.refreshStatus().then(() => {
+    // gitExtension.ready.then(() => {
+    //   try {
+    //     console.log('ready completed successfully');
+    //     let currentBranchName = gitExtension.currentBranch.name;
+    //     let currentBranchtopCommit = gitExtension.currentBranch.top_commit;
+    //     console.log(currentBranchtopCommit);
+    //     console.log(currentBranchName);
+    //   } catch (error) {
+    //     console.log(error);
+    //     console.log('failed to get currentBranch name or top commit');
+    //   }
+    // });
+    // try {
+    //   gitExtension.refreshBranch();
+    // } catch (error) {
+    //   console.log(error);
+    //   console.log('using gitExtension refreshBranch failed');
+    // }
+
+    // if (gitExtension.currentBranch) {
+    //   console.log(gitExtension.currentBranch.name);
+    // } else {
+    //   console.log("branch name master since we couldn't find a name");
+    // }
+    // console.log(
+    //   `is gitExtension.refreshStatus? ${gitExtension.currentBranch.name}`
+    // );
+
+    // const { branches, currentBranch, pathRepository } = gitExtension;
+    // console.log(`branches are ${branches}`);
+    // console.log(`currentBranch are ${currentBranch}`);
+    // console.log(`pathRepository are ${pathRepository}`);
+
     // Add JupyterLab commands
-    addCommands(app, gitExtension, filebrowser, settings, notebookTracker, connectionLost, serverRoot, trans);
+    addCommands(
+      app,
+      gitExtension,
+      filebrowser,
+      settings,
+      notebookTracker,
+      connectionLost,
+      serverRoot,
+      trans
+    );
 
     // Let the application restorer track the running panel for restoration of
     // application state (e.g. setting the running panel as the current side bar
@@ -217,11 +288,9 @@ async function activate(
     //   [];
     // }
     // let items = toArray(widget.selectedItems());
-
-
   }
-  
-    // Register diff providers
+
+  // Register diff providers
   gitExtension.registerDiffProvider(
     'Nbdime',
     ['.ipynb'],
@@ -230,6 +299,4 @@ async function activate(
   );
 
   return gitExtension;
-  
 }
-

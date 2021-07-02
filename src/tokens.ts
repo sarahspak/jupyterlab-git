@@ -746,6 +746,13 @@ export namespace Git {
     files?: string[];
   }
 
+  /** Interface for get_remote_url request result
+   * lists the url final_url of the most recent commit
+   */
+  export interface IGetRemoteURLResult {
+    url: string;
+  }
+
   /** Interface for GitLog request result,
    * has the info of a single past commit
    */
@@ -788,6 +795,13 @@ export namespace Git {
   export interface ILogResult {
     code: number;
     commits?: ISingleCommitInfo[];
+  }
+
+  /** TEST - Interface for use with get_current_branch
+   */
+  export interface IGetCurrentBranch {
+    code?: number;
+    current_branch?: string;
   }
 
   export interface IIdentity {
@@ -973,9 +987,10 @@ export enum CommandIDs {
   // SP additions
   gitShowDialog = 'git:show-dialog',
   gitGetAllFiles = 'git:show-all-files',
-  tc4ml = "git:tc4ml", 
-  add_tc4ml = "git:add_tc4ml",
-  saveNotebook = "git:saveNotebook",
-  runMultipleCommands = "git:run-multiple-commands",
-  getCellMetadata = "git:getCellMetadata"
+  tc4ml = 'git:tc4ml',
+  add_tc4ml = 'git:add_tc4ml',
+  gitAdd = 'git:add',
+  saveNotebook = 'git:saveNotebook',
+  runMultipleCommands = 'git:run-multiple-commands',
+  getCellMetadata = 'git:getCellMetadata'
 }

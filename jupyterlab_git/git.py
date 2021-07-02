@@ -787,25 +787,31 @@ class Git:
             return {"code": code, "command": " ".join(cmd), "message": error}
         return {"code": code}
 
-    async def get_remote_url(self, commit_sha, filename, top_repo_path):
+    async def get_remote_url(self, commit_sha, file_name, top_repo_path):
         """
         Execute git ls-remote --get-url, get the result back, clean output and combine w/ commit_sha
         Requires that you first push to master and use gitModel.currentBranch.top_commit
         """
         cmd = ["git", "ls-remote", "--get-url"]
-        # todo - will this only ever be one output? I'm assuming that's the case
+        # todo - will the output of the cmd only ever be one var? I'm assuming that's the case
         code, output, error = await execute(cmd, cwd=top_repo_path)
 
         response = {"code": code, "command": " ".join(cmd)}
+        get_logger().debug(
+            "Execute {!s} and got this code back: {!s}.".format(cmd, code)
+        )
 
         if code != 0:
             response["message"] = error
         else:
             response["top_level_repo_url"] = (
-                output.replace("git@", "").replace(":", "/").rstrip(".git")
+                output.replace("git@", "").replace(":", "/")
+            ).rstrip(".git")
+            response["url"] = (
+                str(response["top_level_repo_url"]) + f"/blob/{commit_sha}/{file_name}"
             )
-            response["final_url"] = (
-                str(response["top_level_repo_url"]) + f"/blob/{commit_sha}/{filename}"
+            get_logger().debug(
+                f"top_level_repo_url is {response['top_level_repo_url']} and final url is {response['url']}"
             )
         return response
 
@@ -841,6 +847,31 @@ class Git:
         if code != 0:
             return {"code": code, "command": " ".join(cmd), "message": error}
         return {"code": code}
+
+    async def get_all_deleted_files(self, top_repo_path):
+        """
+        Execute `git ls-files --deleted to return only files that have been deleted
+        Returns a list of deleted files
+        """
+        # cmd = ["git", "ls-files", "--deleted"]
+        # code, output, error = await execute(cmd, cwd=top_repo_path)
+        # if code != 0:
+        #     return {"code": code, "command": " ".join(cmd), "message": error}
+        # deleted_files = []
+        # for f in output["files"]:
+        status = await self.status(top_repo_path)
+        if status["code"] != 0:
+            return status
+
+        deleted = []
+        for f in status["files"]:
+            get_logger().debug(f"f[x] is {f['x']}")
+            get_logger().debug(f"f[y] is {f['y']}")
+            get_logger().debug(f"{f}")
+
+            if f["x"] == "D" or f["y"] == "D":
+                deleted.append(f["from"].strip('"'))
+        return await deleted
 
     async def add_all_untracked(self, top_repo_path):
         """
@@ -1048,10 +1079,17 @@ class Git:
         command = ["git", "push"]
         if set_upstream:
             command.append("--set-upstream")
+            get_logger().debug(f"set_upstream is true {set_upstream}.")
         command.extend([remote, branch])
 
         env = os.environ.copy()
         if auth:
+            get_logger().debug(f"auth exists and contains {auth}.")
+            get_logger().debug(f"command is {command}.")
+            get_logger().debug(f"auth is {auth['username']}.")
+            get_logger().debug(f"password is {auth['password']}.")
+            get_logger().debug(f"cwd is {os.path.join(self.root_dir, curr_fb_path)}")
+            get_logger().debug(f"env is {env}")
             env["GIT_TERMINAL_PROMPT"] = "1"
             code, output, error = await execute(
                 command,
@@ -1061,12 +1099,20 @@ class Git:
                 env=env,
             )
         else:
+            get_logger().debug(f"auth does not exist.")
             env["GIT_TERMINAL_PROMPT"] = "0"
+            get_logger().debug(f"command is {command}.")
+            get_logger().debug(f"env is {env}.")
+            get_logger().debug(f"cwd is {os.path.join(self.root_dir, curr_fb_path)}")
+
             code, output, error = await execute(
                 command,
                 env=env,
                 cwd=os.path.join(self.root_dir, curr_fb_path),
             )
+            get_logger().debug(f"code is {code}")
+            get_logger().debug(f"output is {output}")
+            get_logger().debug(f"error is {error}")
 
         response = {"code": code, "message": output.strip()}
 
@@ -1136,6 +1182,30 @@ class Git:
         """
         return branch_reference.startswith("refs/remotes/")
 
+    # # original get_current_branch from jupyterlab-git
+    # async def get_current_branch(self, current_path):
+    #     """Use `symbolic-ref` to get the current branch name. In case of
+    #     failure, assume that the HEAD is currently detached, and fall back
+    #     to the `branch` command to get the name.
+    #     See https://git-blame.blogspot.com/2013/06/checking-current-branch-programatically.html
+    #     """
+    #     command = ["git", "symbolic-ref", "--short", "HEAD"]
+    #     code, output, error = await execute(
+    #         command, cwd=os.path.join(self.root_dir, current_path)
+    #     )
+    #     if code == 0:
+    #         return output.strip()
+    #     elif "not a symbolic ref" in error.lower():
+    #         current_branch = await self._get_current_branch_detached(current_path)
+    #         return current_branch
+    #     else:
+    #         raise Exception(
+    #             "Error [{}] occurred while executing [{}] command to get current branch.".format(
+    #                 error, " ".join(command)
+    #             )
+    #         )
+
+    # new code for handling request api bs
     async def get_current_branch(self, current_path):
         """Use `symbolic-ref` to get the current branch name. In case of
         failure, assume that the HEAD is currently detached, and fall back
@@ -1147,16 +1217,17 @@ class Git:
             command, cwd=os.path.join(self.root_dir, current_path)
         )
         if code == 0:
-            return output.strip()
+            return {"code": code, "current_branch": output.strip()}
         elif "not a symbolic ref" in error.lower():
             current_branch = await self._get_current_branch_detached(current_path)
-            return current_branch
+            return {"code": code, "current_branch": current_branch}
         else:
-            raise Exception(
-                "Error [{}] occurred while executing [{}] command to get current branch.".format(
-                    error, " ".join(command)
-                )
-            )
+            return {"code": code, "command": " ".join(command), "message": error}
+            # raise Exception(
+            #     "Error [{}] occurred while executing [{}] command to get current branch.".format(
+            #         error, " ".join(command)
+            #     )
+            # )
 
     async def _get_current_branch_detached(self, current_path):
         """Execute 'git branch -a' to get current branch details in case of detached HEAD"""

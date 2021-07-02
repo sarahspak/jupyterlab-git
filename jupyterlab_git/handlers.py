@@ -1,6 +1,3 @@
-"""
-Module with all the individual handlers, which execute git commands and return the results to the frontend.
-"""
 import json
 import os
 from pathlib import Path
@@ -39,7 +36,8 @@ class GitCloneHandler(GitHandler):
             {
               'current_path': 'current_file_browser_path',
               'repo_url': 'https://github.com/path/to/myrepo',
-              OPTIONAL 'auth': '{ 'username': '<username>',
+              OPTIONAL 'auth': '{ 'username': '<
+              >',
                                   'password': '<password>'
                                 }'
             }
@@ -357,6 +355,24 @@ class GitAddAllUntrackedHandler(GitHandler):
         self.finish(json.dumps(body))
 
 
+class GitGetAllDeletedHandler(GitHandler):
+    """
+    TEST> Handler that gets all of the deleted files. does not add them,
+    """
+
+    @tornado.web.authenticated
+    async def post(self):
+        """
+        POST request handler, adds all the untracked files.
+        """
+        body = await self.git.get_all_deleted_files(
+            self.get_json_body()["top_repo_path"]
+        )
+        if body["code"] != 0:
+            self.set_status(500)
+        self.finish(json.dumps(body))
+
+
 class GitRemoteAddHandler(GitHandler):
     """Handler for 'git remote add <name> <url>'."""
 
@@ -438,19 +454,19 @@ class GitResetToCommitHandler(GitHandler):
 
 class GitGetRemoteURLHandler(GitHandler):
     """
-    Handler for Git remote url.
+    TEST Handler for Git remote url.
     """
 
     @tornado.web.authenticated
     async def post(self):
         """
-        GET request handler?
+        POST request handler
         """
         data = self.get_json_body()
         top_repo_path = data["top_repo_path"]
-        commit_sha = data["commit_id"]
-        filename = data["filename"]
-        body = await self.git.get_remote_url(commit_sha, filename, top_repo_path)
+        commit_sha = data["commit_sha"]
+        file_name = data["file_name"]
+        body = await self.git.get_remote_url(commit_sha, file_name, top_repo_path)
 
         if body["code"] != 0:
             self.set_status(500)
@@ -521,6 +537,32 @@ class GitUpstreamHandler(GitHandler):
         current_path = self.get_json_body()["current_path"]
         current_branch = await self.git.get_current_branch(current_path)
         response = await self.git.get_upstream_branch(current_path, current_branch)
+        if response["code"] != 0:
+            self.set_status(500)
+        self.finish(json.dumps(response))
+
+
+class GitGetCurrentBranch(GitHandler):
+    @tornado.web.authenticated
+    async def post(self):
+        """
+        TEST Handler to get current branch name
+        Input format:
+            {
+              'current_path': 'current_file_browser_path',
+            }
+        """
+        # data = self.get_json_body()
+        current_path = self.get_json_body()["current_path"]
+        # adding in two logger statements
+        self.log.debug("current_path {!s}".format(current_path))
+        self.log.debug("current path is updated")
+        self.log.debug("current path is updated")
+
+        response = await self.git.get_current_branch(
+            current_path,
+        )
+        self.log.debug("response is {!s}".format(response))
         if response["code"] != 0:
             self.set_status(500)
         self.finish(json.dumps(response))
@@ -600,16 +642,21 @@ class GitPushHandler(GitHandler):
         data = self.get_json_body()
         current_path = data["current_path"]
         known_remote = data.get("remote")
+        self.log.debug(f"known_remote is {known_remote}")
 
         current_local_branch = await self.git.get_current_branch(current_path)
+        self.log.debug(f"current_local_branch is {current_local_branch}")
 
         set_upstream = False
         current_upstream_branch = await self.git.get_upstream_branch(
             current_path, current_local_branch
         )
+        self.log.debug(f"current_upstream_branch is {current_upstream_branch}")
 
         if known_remote is not None:
             set_upstream = current_upstream_branch["code"] != 0
+            self.log.debug("we are in the known_remote is not none branch")
+            self.log.debug(f"set_upstream is {set_upstream}")
 
             remote_name, _, remote_branch = known_remote.partition("/")
 
@@ -620,7 +667,16 @@ class GitPushHandler(GitHandler):
             }
 
         if current_upstream_branch["code"] == 0:
+            self.log.debug("we are in the current_upstream_branch['code']==0 branch")
             branch = ":".join(["HEAD", current_upstream_branch["remote_branch"]])
+
+            self.log.debug(f"branch is {branch}")
+            self.log.debug(f"current_path is {current_path}")
+            self.log.debug(f"set_upstream is {set_upstream}")
+            self.log.debug(f"data.getauth is {data.get('auth', None)}")
+            self.log.debug(
+                f"current_upstream_branch['remote_short_name'] is {current_upstream_branch['remote_short_name']}"
+            )
             response = await self.git.push(
                 current_upstream_branch["remote_short_name"],
                 branch,
@@ -884,9 +940,9 @@ def setup_handlers(web_app):
 
     git_handlers = [
         ("/git/add", GitAddHandler),
-        ("/git/add_tc4ml", GitAddTC4MLHandler),
         ("/git/add_all_unstaged", GitAddAllUnstagedHandler),
         ("/git/add_all_untracked", GitAddAllUntrackedHandler),
+        ("/git/get_all_deleted_files", GitGetAllDeletedHandler),
         ("/git/all_history", GitAllHistoryHandler),
         ("/git/branch", GitBranchHandler),
         ("/git/branch/delete", GitBranchDeleteHandler),
@@ -903,8 +959,6 @@ def setup_handlers(web_app):
         ("/git/init", GitInitHandler),
         ("/git/log", GitLogHandler),
         ("/git/pull", GitPullHandler),
-        ("/git/show", GitShowDialogHandler),
-        ("/git/get_all_files", GitGetAllFilesHandler),
         ("/git/push", GitPushHandler),
         ("/git/remote/add", GitRemoteAddHandler),
         ("/git/remote/fetch", GitFetchHandler),
@@ -919,7 +973,12 @@ def setup_handlers(web_app):
         ("/git/ignore", GitIgnoreHandler),
         ("/git/tags", GitTagHandler),
         ("/git/tag_checkout", GitTagCheckoutHandler),
+        # new additions
         ("/git/get_remote_url", GitGetRemoteURLHandler),
+        ("/git/get_all_files", GitGetAllFilesHandler),
+        ("/git/show", GitShowDialogHandler),
+        ("/git/add_tc4ml", GitAddTC4MLHandler),
+        ("/git/get_current_branch", GitGetCurrentBranch),
     ]
 
     # add the baseurl to our paths

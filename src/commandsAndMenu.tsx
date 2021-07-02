@@ -391,6 +391,8 @@ export function addCommands(
           Operation.Push,
           trans
         );
+        console.log(details);
+        console.log('details printed above ');
         logger.log({
           message: trans.__('Successfully pushed'),
           level: Level.SUCCESS,
@@ -455,29 +457,40 @@ export function addCommands(
   });
 
   commands.addCommand(CommandIDs.saveNotebook, {
-    label: trans.__('Save + git add/commit/push current notebook'),
-    caption: trans.__('Save and git add currently open notebook'),
+    label: trans.__('Create shareable link for TC4ML documentation'),
+    caption: trans.__(
+      'Save, commit, and push currently open notebook to GHE. Get a shareable link back'
+    ),
     isEnabled: () => gitModel.pathRepository !== null,
     execute: async () => {
+      const current = Private.getCurrent(notebookTracker, shell);
+      const current_file_name = current.context.path;
+      const repoPath = gitModel.pathRepository;
+      const fullFileName = repoPath.concat('/').concat(current_file_name);
+
       // STEP 1 - restart all and save
-      const restart = await commands.execute('runmenu:restart-and-run-all');
-      if (!restart) {
-        return;
-      }
-      // constantly check the kernel connection status
-      // also constantly check that all cells in the notebook have an executionCount
+      await commands.execute('runmenu:restart-and-run-all').then(() => {
+        console.log(
+          'the restart and run all command has completed, but believe cells are still running'
+        );
+      });
+
+      console.log(
+        'does this show up before the restart and run all command console log has completed?'
+      );
       while (!Private.checkKernelConnection(connectionLost, app)) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
-      // }
 
       if (Private.checkKernelConnection(connectionLost, app)) {
-        console.log('wow the kernel is connected again!');
+        console.log('wow, the kernel is connected again!');
       }
       // need to enter a pause?
+      // TODO
+      // to do - need some kind of check to ensure nothing is running in any cells
       const result = await showDialog({
         title: 'Restart complete',
-        body: 'Do you wish to save and push this notebook to GHE?',
+        body: 'Do you wish to push this notebook to GHE?',
         buttons: [
           Dialog.cancelButton({ label: trans.__('Cancel') }),
           Dialog.okButton({ label: trans.__('Yes') })
@@ -488,7 +501,7 @@ export function addCommands(
         // STEP 2 - USE WIDGET TO SAVE
         logger.log({
           level: Level.RUNNING,
-          message: trans.__('Running command to save current notebook...')
+          message: trans.__('Getting notebook ready for GHE...')
         });
         try {
           while (!notebookTracker.currentWidget)
@@ -502,14 +515,10 @@ export function addCommands(
             item.model.notebook = current && current.content;
           });
 
-          const current = Private.getCurrent(notebookTracker, shell);
-          const currentPath = current.context.path;
-          const repoPath = gitModel.pathRepository;
-          const fullFileName = repoPath.concat('/').concat(currentPath);
           await Private.saveNb(
             gitModel,
             fullFileName,
-            currentPath,
+            current_file_name,
             commands,
             context
           );
@@ -528,6 +537,9 @@ export function addCommands(
             error
           });
         }
+      } else {
+        console.log('canceled the saving');
+        return;
       }
 
       // step 4 - commit
@@ -542,6 +554,7 @@ export function addCommands(
           level: Level.ERROR,
           message: 'Commit failed'
         });
+        return;
       } else {
         console.log('we successfully committed!');
         logger.log({
@@ -556,46 +569,65 @@ export function addCommands(
         level: Level.RUNNING,
         message: trans.__('starting git push...')
       });
-      const current = Private.getCurrent(notebookTracker, shell);
-      return showDialog({
+      const currBranchName = await Private.getCurrBranchName(gitModel).then(
+        result => result.current_branch
+      );
+      void showDialog({
         title: 'Git Push',
         body: (
           <span>
             {'About to push this notebook to the branch below'}
             {current.context.path}
+            {currBranchName}
           </span>
         ),
         buttons: [
           Dialog.cancelButton({ label: trans.__('Cancel') }),
           Dialog.okButton({ label: trans.__('Yes') })
         ]
-      }).then(async result => {
-        if (result.button.accept) {
-          try {
+      })
+        .then(async result => {
+          if (result.button.accept) {
             console.log('starting git push');
-            const gitPushResults = await commands.execute('git:push');
-            if (!gitPushResults) {
-              console.log('error');
+            try {
+              await commands.execute('git:push').then(() => {
+                console.log('we successfully pushed!');
+                logger.log({
+                  level: Level.SUCCESS,
+                  message: 'Git push is complete'
+                });
+              });
+            } catch (error) {
+              console.log('error in our git push command');
               logger.log({
                 level: Level.ERROR,
-                message: 'Git push failed'
+                message: 'Git push failed',
+                error
               });
-            } else {
-              console.log('we successfully pushed!');
-              logger.log({
-                level: Level.SUCCESS,
-                message: 'Git push is complete'
-              });
+              return;
             }
-          } catch (error) {
+          } else {
             console.log('something went wrong w/ the commit');
             logger.log({
               level: Level.ERROR,
               message: 'Commit failed'
             });
           }
-        }
-      });
+        })
+        .then(() => {
+          // step 6 get commit link
+          try {
+            Private.gitGetWebURL(gitModel, current_file_name).then(result => {
+              console.log(`successfully got weburl ${result.url}`);
+            });
+          } catch (error) {
+            logger.log({
+              level: Level.ERROR,
+              message: 'error in getting gitWebURL',
+              error
+            });
+          }
+        });
     }
   });
 
@@ -611,6 +643,40 @@ export function addCommands(
         await app.commands.execute(cmd);
       }
       console.log(`Commands ${commandsString} have completed.`);
+    }
+  });
+  commands.addCommand(CommandIDs.gitAdd, {
+    label: trans.__('Git Add with some neat diff stuff'),
+    caption: trans.__('git add'),
+    isEnabled: () => gitModel.pathRepository !== null,
+    execute: async () => {
+      logger.log({
+        level: Level.RUNNING,
+        message: trans.__('starting my own git add...')
+      });
+      const current = Private.getCurrent(notebookTracker, shell);
+      const current_file_name = current.context.path;
+      // const repoPath = gitModel.pathRepository;
+      // const fullFileName = repoPath.concat('/').concat(current_file_name);
+
+      /// plan of attack: first we git add the current file,
+      // then we git add all deleted files, so that git will detect that we've renamed the file
+      // then we git push
+      try {
+        await Private.gitAddWithBranching(gitModel, current_file_name)
+          .then(() => {
+            // check to see if we can see if a file has been renamed after we add this current file
+            gitModel.get_changed_files().then(result => {
+              console.log('this is changesWORKINGvsHead');
+              console.log(result[0].files);
+              console.log('this is changesINDEXvsHead');
+              console.log(result[1].files);
+            });
+          })
+          .then(() => gitModel.getAllDeletedFiles());
+      } catch (error) {
+        throw error;
+      }
     }
   });
 
@@ -710,28 +776,6 @@ export function addCommands(
   });
 
   // step 3: save
-
-  // const main = (await commands.execute(
-  //   'terminal:create-new',
-  //   args
-  // )) as MainAreaWidget<ITerminal.ITerminal>;
-
-  // try {
-  //   if (gitModel.pathRepository !== null) {
-  //     const terminal = main.content;
-  //     terminal.session.send({
-  //       type: 'stdin',
-  //       content: [
-  //         `cd "${gitModel.pathRepository.split('"').join('\\"')}"\n`
-  //       ]
-  //     });
-  //   }
-
-  //   return main;
-  // } catch (e) {
-  //   console.error(e);
-  //   main.dispose();
-  // }
 
   /** Add test SHOW MENU COMMAND */
   commands.addCommand(CommandIDs.gitShowDialog, {
@@ -1324,11 +1368,11 @@ export function createGitMenu(
   ];
 
   const menu = new Menu({ commands });
-  menu.title.label = 'tc4ml-sbc-github extension';
+  menu.title.label = 'MLHome Tools';
   [
     // CommandIDs.gitPush,
     // CommandIDs.gitPull,
-    CommandIDs.gitShowDialog,
+    // CommandIDs.gitShowDialog,
     // CommandIDs.gitGetAllFiles,
     CommandIDs.getCellMetadata
     // CommandIDs.tc4ml,
@@ -1341,23 +1385,23 @@ export function createGitMenu(
 
   menu.addItem({ command: CommandIDs.saveNotebook });
 
-  menu.addItem({
-    command: CommandIDs.runMultipleCommands,
-    args: {
-      commands: [
-        'runmenu:restart-and-run-all',
-        // then, save my work
-        'docmanager:save-as',
-        // 'git:saveNotebook',
-        'git:show-all-files'
-        // git pick branch or make newone
-        // git add
-        // git commit
-        // git push
-        // git commit hash + link
-      ]
-    }
-  });
+  // menu.addItem({
+  //   command: CommandIDs.runMultipleCommands,
+  //   args: {
+  //     commands: [
+  //       'runmenu:restart-and-run-all',
+  //       // then, save my work
+  //       'docmanager:save-as',
+  //       // 'git:saveNotebook',
+  //       'git:show-all-files'
+  //       // git pick branch or make newone
+  //       // git add
+  //       // git commit
+  //       // git push
+  //       // git commit hash + link
+  //     ]
+  //   }
+  // });
 
   menu.addItem({ type: 'separator' });
 
@@ -1616,6 +1660,7 @@ namespace Private {
       throw error;
     }
   }
+  /* eslint-enable no-inner-declarations */
 
   export async function TC4ML<T>(
     model: GitExtension,
@@ -1830,11 +1875,27 @@ namespace Private {
       if (result.button.accept) {
         commitMsg = result.value;
         console.log(`The commit message you entered was "${commitMsg}"`);
+      } else if (result.button.className == 'Cancel') {
+        console.log('you hit the cancel button for the commit box!');
+        logger.log({
+          message: 'you hit the cancel button',
+          level: Level.ERROR
+        });
+        return false;
+      } else if (!result.button.accept) {
+        console.log("let's confirm the value of result.value");
+        console.log(result.value);
+        console.log('No commit message - are you sure about this?');
+        logger.log({
+          message: 'No commit message!',
+          level: Level.ERROR
+        });
+        return false;
       }
     } catch (error) {
       console.error(error);
       logger.log({
-        message: 'No commit message!',
+        message: 'failed to commit for some reason!',
         level: Level.ERROR,
         error
       });
@@ -1846,7 +1907,7 @@ namespace Private {
         await model.commit(commitMsg);
       } catch (error) {
         console.error(error);
-        showErrorMessage('Error when commiting torepository', error);
+        showErrorMessage('Error when committing to repository', error);
         return false;
       }
     }
@@ -1854,50 +1915,63 @@ namespace Private {
     return true;
   }
 
-  export async function gitGetURL(
+  export async function gitGetWebURL(
     model: GitExtension,
-    commit_sha: string,
     file_name: string
-  ): Promise<void> {
-    model.get_remote_url(commit_sha, file_name);
+  ): Promise<Git.IGetRemoteURLResult> {
+    const commit_sha = model.currentBranch.top_commit;
+    console.log('this is my most recent commit');
+    console.log(commit_sha);
+    return model.get_remote_url(commit_sha, file_name);
+  }
+
+  /**
+   * Get current branch name
+   * @private
+   * @param model - Git extension model
+   * @param retry - Is this operation retried?
+   * @returns Promise for returning a name
+   */
+  export async function getCurrBranchName(
+    model: GitExtension,
+    retry = false
+  ): Promise<Git.IGetCurrentBranch> {
+    model.refreshBranch;
+    const currBranchNameAsInterface: Git.IGetCurrentBranch = {
+      current_branch: await model.get_current_branch()
+    };
+    return currBranchNameAsInterface;
   }
 
   /**
    * Handle Git add
    * @private
    * @param model - Git extension model
-   * @param operation - Git operation name
-   * @param args - Files to add
-   * @param trans - language translator
+   * @param short_filename - Current files to add
    * @param retry - Is this operation retried?
    * @returns Promise for displaying a dialog
    */
 
   export async function gitAddWithBranching(
     model: GitExtension,
-    long_filename: string,
     short_filename: string,
     retry = false
   ): Promise<void> {
+    const currBranchName = await getCurrBranchName(model).then(
+      result => result.current_branch
+    );
     try {
       // Git add action
       const modelAddFile = () => model.add_tc4ml(short_filename);
-      if (model.currentBranch) {
-        const currBranchName = model.currentBranch.name;
-        const currBranchTopCommit = model.currentBranch.top_commit;
-        console.log(currBranchName);
-        console.log(currBranchTopCommit);
-      }
-
       const body = (
         <div>
-          {
-            'Do you want to add changes from this notebook to your current branch?'
-          }
-          <br />
+          {'Do you want to add changes from this notebook '}
           <pre>{short_filename}</pre>
+          {' to your current branch?'}
+          <br />
           <br />
           {'current branch'}
+          <pre>{currBranchName}</pre>
           <br />
         </div>
       );
@@ -1916,10 +1990,12 @@ namespace Private {
           }),
           Dialog.okButton({ label: 'Yes' })
         ]
-      }).then(async ({ button: { accept, actions } }) => {
+      }).then(async ({ button: { accept, label } }) => {
+        // BUTTON ONE - GO AHEAD AND ADD A NEW FILE TO CURRENT BRANCH
         if (accept) {
           modelAddFile();
-        } else if (actions.includes('checkout')) {
+        } else if (label.includes('Make New Branch')) {
+          // BUTTON TWO - MAKE A NEW BRANCH IF THEY CLICK THE MAKE A NEW BRANCH BUTTON
           let newBranchName = '';
           try {
             const nowdate = new Date();
@@ -1932,52 +2008,67 @@ namespace Private {
               console.log(
                 `The new branch you want to create is "${newBranchName}"`
               );
-            }
-          } catch (error) {
-            console.error(error);
-            logger.log({
-              message: 'missing new branch name!',
-              level: Level.ERROR,
-              error
-            });
-            return false;
-          }
-          // create new branch!
-          if (newBranchName) {
-            // first create the data w/ right interface
-            const file_name_checkout: Git.ICheckoutOptions = {
-              branchname: newBranchName,
-              newBranch: true,
-              startpoint: '',
-              filename: short_filename
-            };
-            try {
-              const makeNewBranchResult = await model.checkout(
-                file_name_checkout
-              );
-              if (makeNewBranchResult) {
-                console.log('success! branch has been created');
-                return true;
+              if (newBranchName) {
+                const file_name_checkout: Git.ICheckoutOptions = {
+                  branchname: newBranchName,
+                  newBranch: true,
+                  startpoint: '',
+                  filename: short_filename
+                };
+                try {
+                  const makeNewBranchResult = await model.checkout(
+                    file_name_checkout
+                  );
+                  if (makeNewBranchResult) {
+                    console.log(
+                      `success! branch has been created, and the name is ${newBranchName}`
+                    );
+                    console.log(
+                      'WE NEED TO SEE IF OUR NEW FILE HAS BEEN COMMITED TO THIS NEW BRANCH'
+                    );
+                    return true;
+                  } else {
+                    console.log('failed to get the makeNewBranchResult');
+                    return false;
+                  }
+                } catch (error) {
+                  logger.log({
+                    message: 'branch could not be created!',
+                    level: Level.ERROR,
+                    error
+                  });
+                  return false;
+                }
+              } else {
+                console.error('we do not have a new branch name');
+                logger.log({
+                  message: 'missing new branch name!',
+                  level: Level.ERROR
+                });
+                return false;
               }
-            } catch (error) {
-              logger.log({
-                message: 'branch could not be created!',
-                level: Level.ERROR,
-                error
-              });
+            } else {
+              console.log(
+                'you did not hit the accept button to confirm your new branch name'
+              );
               return false;
             }
+          } catch (error) {
+            console.log('failed to make a new branch');
           }
-        } else if (actions.includes('change_branch')) {
-          // model.branches
-          // TODO
+        } else if (label.includes('Change Branch')) {
+          // BUTTON THREE - CHANGE BRANCHES TO ANOTHER EXISTING BRANCH
+          console.log(
+            'lets change branches - but i dont have code yet for this'
+          );
+          // model.branches// TODO
           return;
         } else if (!accept) {
           undefined;
         }
       });
     } catch (error) {
-      throw error;
+      console.log('something somewhere went wrong');
     }
   }
 
@@ -1987,7 +2078,7 @@ namespace Private {
   export async function saveNb(
     model: GitExtension,
     fullFileName: string,
-    shorterFileName: string,
+    short_filename: string,
     commands: CommandRegistry,
     context: DocumentRegistry.IContext<INotebookModel>
   ): Promise<void> {
@@ -2003,7 +2094,7 @@ namespace Private {
         if (result.button.accept) {
           try {
             console.log('starting git add');
-            await gitAddWithBranching(model, fullFileName, shorterFileName);
+            await gitAddWithBranching(model, short_filename);
             console.log('complete - successfully added');
             logger.log({
               level: Level.SUCCESS,
@@ -2034,14 +2125,14 @@ namespace Private {
       if (result.button.accept) {
         try {
           commands.execute('docmanager:save');
-          console.log('saving file now!!!');
-          gitAddWithBranching(model, fullFileName, shorterFileName);
+          console.log('saving file now!');
+          await gitAddWithBranching(model, short_filename);
         } catch (error) {
           throw error;
         }
       } else if (!result.button.accept) {
         try {
-          await gitAddWithBranching(model, fullFileName, shorterFileName);
+          await gitAddWithBranching(model, short_filename);
           console.log('succesfully git added');
         } catch (error) {
           throw error;

@@ -271,6 +271,28 @@ export class GitExtension implements IGitExtension {
       return this.getRelativeFilePath(status.to) === path;
     });
   }
+  /**
+   * TEST Get all "deleted" files to the repository staging area.
+   *
+   * @returns promise which resolves upon adding files to the repository staging area
+   *
+   * @throws {Git.NotInRepository} If the current path is not a Git repository
+   * @throws {Git.GitResponseError} If the server response is not ok
+   * @throws {ServerConnection.NetworkError} If the request cannot be made
+   */
+
+  async getAllDeletedFiles(): Promise<Git.IChangedFilesResult> {
+    const path = await this._getPathRepository();
+    const results = await requestAPI<Git.IChangedFilesResult>(
+      'get_all_deleted_files',
+      'POST',
+      {
+        top_repo_path: path
+      }
+    );
+    await this.refreshStatus();
+    return results;
+  }
 
   /**
    * Add all "unstaged" files to the repository staging area.
@@ -718,7 +740,7 @@ export class GitExtension implements IGitExtension {
     return data;
   }
 
-    /**
+  /**
    * FOR TESTING ONLY - SHOW A GIT DIALOG
    *
    * @param auth - remote authentication information
@@ -728,20 +750,18 @@ export class GitExtension implements IGitExtension {
    * @throws {Git.GitResponseError} If the server response is not ok
    * @throws {ServerConnection.NetworkError} If the request cannot be made
    */
-     async show(
-      auth?: Git.IAuth,
-      Base?: string,
-      Remote?: string
-    ): Promise<Git.IChangedFilesResult> {
-      // const files_output = (await this._changedFiles('WORKING', 'HEAD')).files;
-      return await requestAPI<Git.IChangedFilesResult>('show', 'POST', {
-        current_path: this.pathRepository, 
-        base: Base,
-        remote: Remote
-      });
-    }
-
-    /**
+  async show(
+    auth?: Git.IAuth,
+    Base?: string,
+    Remote?: string
+  ): Promise<Git.IChangedFilesResult> {
+    return await requestAPI<Git.IChangedFilesResult>('show', 'POST', {
+      current_path: this.pathRepository,
+      base: Base,
+      remote: Remote
+    });
+  }
+  /**
    * FOR TESTING ONLY - SHOW A GIT DIALOG
    *
    * @param auth - remote authentication information
@@ -751,19 +771,23 @@ export class GitExtension implements IGitExtension {
    * @throws {Git.GitResponseError} If the server response is not ok
    * @throws {ServerConnection.NetworkError} If the request cannot be made
    */
-     async get_remote_url(
-      commit_sha: string,
-      filename: string,
-    ): Promise<Git.IChangedFilesResult> {
-      // const files_output = (await this._changedFiles('WORKING', 'HEAD')).files;
-      return await requestAPI<Git.IChangedFilesResult>('get_remote_url', 'POST', {
-        commit_sha: commit_sha,
-        current_path: this.pathRepository, 
-        filename: filename,
-      });
-    }
+  async get_remote_url(
+    commit_sha: string,
+    file_name: string
+  ): Promise<Git.IGetRemoteURLResult> {
+    const path = await this._getPathRepository();
+    console.log(`this is my path: ${path}`);
+    console.log(
+      `this is the commit_sha of the most recent commit ${commit_sha}`
+    );
+    return await requestAPI<Git.IGetRemoteURLResult>('get_remote_url', 'POST', {
+      commit_sha: commit_sha,
+      file_name: file_name,
+      top_repo_path: path
+    });
+  }
 
-    /**
+  /**
    * FOR TESTING ONLY - RETURN A LIST OF ALL CHANGED FILES
    *
    * @param auth - remote authentication information
@@ -773,11 +797,11 @@ export class GitExtension implements IGitExtension {
    * @throws {Git.GitResponseError} If the server response is not ok
    * @throws {ServerConnection.NetworkError} If the request cannot be made
    */
-  async get_all_files(auth?: Git.IAuth,): Promise<Git.IChangedFilesResult> {
+  async get_all_files(auth?: Git.IAuth): Promise<Git.IChangedFilesResult> {
     return await requestAPI<Git.IChangedFilesResult>('get_all_files', 'POST', {
       current_path: this.pathRepository
-      });
-    }
+    });
+  }
 
   /**
    * FOR TESTING ONLY - Add one or more files to the repository staging area.
@@ -791,7 +815,7 @@ export class GitExtension implements IGitExtension {
    * @throws {Git.GitResponseError} If the server response is not ok
    * @throws {ServerConnection.NetworkError} If the request cannot be made
    */
-   async add_tc4ml(filename: string): Promise<void> {
+  async add_tc4ml(filename: string): Promise<void> {
     const path = await this._getPathRepository();
     await this._taskHandler.execute<void>('git:add:files', async () => {
       await requestAPI<void>('add', 'POST', {
@@ -812,8 +836,6 @@ export class GitExtension implements IGitExtension {
   //   });
   //   await this.refreshStatus();
   // }
-
-
 
   /**
    * Push local changes to a remote repository.
@@ -848,6 +870,74 @@ export class GitExtension implements IGitExtension {
   async refresh(): Promise<void> {
     await this._statusPoll.refresh();
     await this._statusPoll.tick;
+  }
+  /**
+   * TEST - get changed_files
+   *
+   *
+   * @returns promise which resolves upon getting the current branch
+   *
+   */
+  async get_changed_files(): Promise<
+    [Git.IChangedFilesResult, Git.IChangedFilesResult]
+  > {
+    // const path = await this._getPathRepository();
+    // const branchName = await this._currentBranch.name;
+    // const body = {
+    //   checkout_branch: false,
+    //   new_check: false,
+    //   branchname: branchName,
+    //   startpoint: '',
+    //   checkout_all: true,
+    //   filename: '',
+    //   top_repo_path: path
+    // };
+    let changesWORKINGvsHead;
+    let changesINDEXvsHead;
+    changesINDEXvsHead = await this._changedFiles('INDEX', 'HEAD');
+    changesWORKINGvsHead = await this._changedFiles('WORKING', 'HEAD');
+    changesINDEXvsHead?.files?.forEach(file =>
+      console.log(`this is ${file} from the INDEX VS HEAD`)
+    );
+    changesWORKINGvsHead?.files?.forEach(file =>
+      console.log(`this is ${file} from the WORKING VS HEAD`)
+    );
+    return [changesWORKINGvsHead, changesINDEXvsHead];
+    // if (!body.new_check && branchName) {
+    //   changes = await this._changedFiles('INDEX', 'HEAD');
+    // } else if (body.filename) {
+    //   changes = { files: [body.filename] };
+    // } else {
+    //   changes = await this._changedFiles('WORKING', 'HEAD');
+    // }
+  }
+  /**
+   * TEST - get the current branch
+   *
+   * @param path - directory path
+   *
+   * @returns promise which resolves upon getting the current branch
+   *
+   */
+  async get_current_branch(): Promise<string | null> {
+    const path = await this._getPathRepository();
+    try {
+      const data = await requestAPI<Git.IGetCurrentBranch>(
+        'get_current_branch',
+        'POST',
+        {
+          current_path: path
+        }
+      );
+      console.log('printing data out before catch an error ');
+      console.log(data);
+      console.log(data.current_branch);
+      return data.current_branch || null;
+    } catch (error) {
+      console.log('we have an error ');
+      console.log(error);
+      return null;
+    }
   }
 
   /**
