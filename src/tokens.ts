@@ -1000,5 +1000,6 @@ export enum CommandIDs {
   gitAdd = 'git:add',
   saveNotebook = 'git:saveNotebook',
   runMultipleCommands = 'git:run-multiple-commands',
-  getCellMetadata = 'git:getCellMetadata'
+  getCellMetadata = 'git:getCellMetadata',
+  restartRunAllCheckKernel = 'git:restartRunAllCheckKernel'
 }

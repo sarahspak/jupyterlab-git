@@ -15,7 +15,7 @@ import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { IStatusBar } from '@jupyterlab/statusbar';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
 import { INotebookTracker } from '@jupyterlab/notebook';
-
+import { Kernel, Session } from '@jupyterlab/services';
 import {
   addCommands,
   addFileBrowserContextMenu,
@@ -79,6 +79,9 @@ async function activate(
   labShell: ILabShell,
   notebookTracker: INotebookTracker,
   connectionLost: IConnectionLost | null,
+  sessionConnection: Session.ISessionConnection,
+  status: Kernel.Status,
+  kernelConnection: Kernel.IKernelConnection,
   translator?: ITranslator
 ): Promise<IGitExtension> {
   let gitExtension: GitExtension | null = null;
@@ -248,6 +251,9 @@ async function activate(
       notebookTracker,
       connectionLost,
       serverRoot,
+      sessionConnection,
+      status,
+      kernelConnection,
       trans
     );
 

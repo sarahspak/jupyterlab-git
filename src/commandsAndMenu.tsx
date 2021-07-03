@@ -8,16 +8,25 @@ import {
   NotebookPanel,
   NotebookTrustStatus
 } from '@jupyterlab/notebook';
+// import { CompletionHandler } from '@jupyterlab/completer';
 // import {
-// KernelManager,
-// KernelSpecManager,
-// KernelMessage,
-// SessionManager,
-//   ServerConnection,
-//   ServiceManager
-//  } from '@jupyterlab/services';
-// import { SessionContext } from '@jupyterlab/apputils';
-import { ICodeCellModel } from '@jupyterlab/cells';
+//   NotebookSearchProvider,
+//   SearchInstance
+// } from '@jupyterlab/documentsearch';
+import {
+  Kernel,
+  Session
+  // KernelMessage,
+  // KernelSpecManager,
+  // KernelMessage,
+  // SessionManager,
+  //   ServerConnection,
+  //   ServiceManager
+} from '@jupyterlab/services';
+import {
+  ICodeCellModel
+  // CodeCellModel
+} from '@jupyterlab/cells';
 import {
   Dialog,
   InputDialog,
@@ -34,7 +43,7 @@ import { PathExt } from '@jupyterlab/coreutils';
 import { FileBrowser } from '@jupyterlab/filebrowser';
 import { Contents } from '@jupyterlab/services';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
-import { ITerminal } from '@jupyterlab/terminal';
+// import { ITerminal } from '@jupyterlab/terminal';
 import {
   TranslationBundle
   // TranslationManager, ITranslator
@@ -69,7 +78,7 @@ import {
   Level
 } from './tokens';
 import { GitCredentialsForm } from './widgets/CredentialsBox';
-import { GitCloneForm } from './widgets/GitCloneForm';
+// import { GitCloneForm } from './widgets/GitCloneForm';
 import { DocumentRegistry } from '@jupyterlab/docregistry';
 
 interface IGitCloneArgs {
@@ -134,244 +143,281 @@ export function addCommands(
   notebookTracker: INotebookTracker,
   connectionLost: IConnectionLost | null,
   serverRoot: string,
+  sessionConnection: Session.ISessionConnection,
+  status: Kernel.Status,
+  kernelConnection: Kernel.IKernelConnection,
   trans: TranslationBundle
 ): void {
   const { commands, shell } = app;
 
-  /**
-   * Commit using a keystroke combination when in CommitBox.
-   *
-   * This command is not accessible from the user interface (not visible),
-   * as it is handled by a signal listener in the CommitBox component instead.
-   * The label and caption are given to ensure that the command will
-   * show up in the shortcut editor UI with a nice description.
-   */
-  commands.addCommand(CommandIDs.gitSubmitCommand, {
-    label: trans.__('Commit from the Commit Box'),
-    caption: trans.__(
-      'Submit the commit using the summary and description from commit box'
-    ),
-    execute: () => void 0,
-    isVisible: () => false
-  });
+  // /**
+  //  * Commit using a keystroke combination when in CommitBox.
+  //  *
+  //  * This command is not accessible from the user interface (not visible),
+  //  * as it is handled by a signal listener in the CommitBox component instead.
+  //  * The label and caption are given to ensure that the command will
+  //  * show up in the shortcut editor UI with a nice description.
+  //  */
+  // commands.addCommand(CommandIDs.gitSubmitCommand, {
+  //   label: trans.__('Commit from the Commit Box'),
+  //   caption: trans.__(
+  //     'Submit the commit using the summary and description from commit box'
+  //   ),
+  //   execute: () => void 0,
+  //   isVisible: () => false
+  // });
 
-  /**
-   * Add open terminal in the Git repository
-   */
-  commands.addCommand(CommandIDs.gitTerminalCommand, {
-    label: trans.__('Open Git Repository in Terminal'),
-    caption: trans.__('Open a New Terminal to the Git Repository'),
-    execute: async args => {
-      const main = (await commands.execute(
-        'terminal:create-new',
-        args
-      )) as MainAreaWidget<ITerminal.ITerminal>;
+  // /**
+  //  * Add open terminal in the Git repository
+  //  */
+  // commands.addCommand(CommandIDs.gitTerminalCommand, {
+  //   label: trans.__('Open Git Repository in Terminal'),
+  //   caption: trans.__('Open a New Terminal to the Git Repository'),
+  //   execute: async args => {
+  //     const main = (await commands.execute(
+  //       'terminal:create-new',
+  //       args
+  //     )) as MainAreaWidget<ITerminal.ITerminal>;
 
-      try {
-        if (gitModel.pathRepository !== null) {
-          const terminal = main.content;
-          terminal.session.send({
-            type: 'stdin',
-            content: [
-              `cd "${gitModel.pathRepository.split('"').join('\\"')}"\n`
-            ]
-          });
-        }
+  //     try {
+  //       if (gitModel.pathRepository !== null) {
+  //         const terminal = main.content;
+  //         terminal.session.send({
+  //           type: 'stdin',
+  //           content: [
+  //             `cd "${gitModel.pathRepository.split('"').join('\\"')}"\n`
+  //           ]
+  //         });
+  //       }
 
-        return main;
-      } catch (e) {
-        console.error(e);
-        main.dispose();
-      }
-    },
-    isEnabled: () =>
-      gitModel.pathRepository !== null &&
-      app.serviceManager.terminals.isAvailable()
-  });
+  //       return main;
+  //     } catch (e) {
+  //       console.error(e);
+  //       main.dispose();
+  //     }
+  //   },
+  //   isEnabled: () =>
+  //     gitModel.pathRepository !== null &&
+  //     app.serviceManager.terminals.isAvailable()
+  // });
 
-  /** Add open/go to git interface command */
-  commands.addCommand(CommandIDs.gitUI, {
-    label: trans.__('Git Interface'),
-    caption: trans.__('Go to Git user interface'),
-    execute: () => {
-      try {
-        shell.activateById('jp-git-sessions');
-      } catch (err) {
-        console.error('Fail to open Git tab.');
-      }
-    }
-  });
+  // /** Add open/go to git interface command */
+  // commands.addCommand(CommandIDs.gitUI, {
+  //   label: trans.__('Git Interface'),
+  //   caption: trans.__('Go to Git user interface'),
+  //   execute: () => {
+  //     try {
+  //       shell.activateById('jp-git-sessions');
+  //     } catch (err) {
+  //       console.error('Fail to open Git tab.');
+  //     }
+  //   }
+  // });
 
-  /** Add git init command */
-  commands.addCommand(CommandIDs.gitInit, {
-    label: trans.__('Initialize a Repository'),
-    caption: trans.__(
-      'Create an empty Git repository or reinitialize an existing one'
-    ),
-    execute: async () => {
-      const currentPath = fileBrowser.model.path;
-      const result = await showDialog({
-        title: trans.__('Initialize a Repository'),
-        body: trans.__('Do you really want to make this directory a Git Repo?'),
-        buttons: [
-          Dialog.cancelButton({ label: trans.__('Cancel') }),
-          Dialog.warnButton({ label: trans.__('Yes') })
-        ]
-      });
+  // /** Add git init command */
+  // commands.addCommand(CommandIDs.gitInit, {
+  //   label: trans.__('Initialize a Repository'),
+  //   caption: trans.__(
+  //     'Create an empty Git repository or reinitialize an existing one'
+  //   ),
+  //   execute: async () => {
+  //     const currentPath = fileBrowser.model.path;
+  //     const result = await showDialog({
+  //       title: trans.__('Initialize a Repository'),
+  //       body: trans.__('Do you really want to make this directory a Git Repo?'),
+  //       buttons: [
+  //         Dialog.cancelButton({ label: trans.__('Cancel') }),
+  //         Dialog.warnButton({ label: trans.__('Yes') })
+  //       ]
+  //     });
 
-      if (result.button.accept) {
-        logger.log({
-          message: trans.__('Initializing...'),
-          level: Level.RUNNING
-        });
-        try {
-          await gitModel.init(currentPath);
-          gitModel.pathRepository = currentPath;
-          logger.log({
-            message: trans.__('Git repository initialized.'),
-            level: Level.SUCCESS
-          });
-        } catch (error) {
-          console.error(
-            trans.__(
-              'Encountered an error when initializing the repository. Error: '
-            ),
-            error
-          );
-          logger.log({
-            message: trans.__('Failed to initialize the Git repository'),
-            level: Level.ERROR,
-            error
-          });
-        }
-      }
-    },
-    isEnabled: () => gitModel.pathRepository === null
-  });
+  //     if (result.button.accept) {
+  //       logger.log({
+  //         message: trans.__('Initializing...'),
+  //         level: Level.RUNNING
+  //       });
+  //       try {
+  //         await gitModel.init(currentPath);
+  //         gitModel.pathRepository = currentPath;
+  //         logger.log({
+  //           message: trans.__('Git repository initialized.'),
+  //           level: Level.SUCCESS
+  //         });
+  //       } catch (error) {
+  //         console.error(
+  //           trans.__(
+  //             'Encountered an error when initializing the repository. Error: '
+  //           ),
+  //           error
+  //         );
+  //         logger.log({
+  //           message: trans.__('Failed to initialize the Git repository'),
+  //           level: Level.ERROR,
+  //           error
+  //         });
+  //       }
+  //     }
+  //   },
+  //   isEnabled: () => gitModel.pathRepository === null
+  // });
 
-  /** Open URL externally */
-  commands.addCommand(CommandIDs.gitOpenUrl, {
-    label: args => args['text'] as string,
-    execute: args => {
-      const url = args['url'] as string;
-      window.open(url);
-    }
-  });
+  // /** Open URL externally */
+  // commands.addCommand(CommandIDs.gitOpenUrl, {
+  //   label: args => args['text'] as string,
+  //   execute: args => {
+  //     const url = args['url'] as string;
+  //     window.open(url);
+  //   }
+  // });
 
-  /** add toggle for simple staging */
-  commands.addCommand(CommandIDs.gitToggleSimpleStaging, {
-    label: trans.__('Simple staging'),
-    isToggled: () => !!settings.composite['simpleStaging'],
-    execute: args => {
-      settings.set('simpleStaging', !settings.composite['simpleStaging']);
-    }
-  });
+  // /** add toggle for simple staging */
+  // commands.addCommand(CommandIDs.gitToggleSimpleStaging, {
+  //   label: trans.__('Simple staging'),
+  //   isToggled: () => !!settings.composite['simpleStaging'],
+  //   execute: args => {
+  //     settings.set('simpleStaging', !settings.composite['simpleStaging']);
+  //   }
+  // });
 
-  /** add toggle for double click opens diffs */
-  commands.addCommand(CommandIDs.gitToggleDoubleClickDiff, {
-    label: trans.__('Double click opens diff'),
-    isToggled: () => !!settings.composite['doubleClickDiff'],
-    execute: args => {
-      settings.set('doubleClickDiff', !settings.composite['doubleClickDiff']);
-    }
-  });
+  // /** add toggle for double click opens diffs */
+  // commands.addCommand(CommandIDs.gitToggleDoubleClickDiff, {
+  //   label: trans.__('Double click opens diff'),
+  //   isToggled: () => !!settings.composite['doubleClickDiff'],
+  //   execute: args => {
+  //     settings.set('doubleClickDiff', !settings.composite['doubleClickDiff']);
+  //   }
+  // });
 
-  /** Command to add a remote Git repository */
-  commands.addCommand(CommandIDs.gitAddRemote, {
-    label: trans.__('Add Remote Repository'),
-    caption: trans.__('Add a Git remote repository'),
+  // /** Command to add a remote Git repository */
+  // commands.addCommand(CommandIDs.gitAddRemote, {
+  //   label: trans.__('Add Remote Repository'),
+  //   caption: trans.__('Add a Git remote repository'),
+  //   isEnabled: () => gitModel.pathRepository !== null,
+  //   execute: async args => {
+  //     if (gitModel.pathRepository === null) {
+  //       console.warn(
+  //         trans.__('Not in a Git repository. Unable to add a remote.')
+  //       );
+  //       return;
+  //     }
+  //     let url = args['url'] as string;
+  //     const name = args['name'] as string;
+
+  //     if (!url) {
+  //       const result = await InputDialog.getText({
+  //         title: trans.__('Add a remote repository'),
+  //         placeholder: trans.__('Remote Git repository URL')
+  //       });
+
+  //       if (result.button.accept) {
+  //         url = result.value;
+  //       }
+  //     }
+
+  //     if (url) {
+  //       try {
+  //         await gitModel.addRemote(url, name);
+  //       } catch (error) {
+  //         console.error(error);
+  //         showErrorMessage(
+  //           trans.__('Error when adding remote repository'),
+  //           error
+  //         );
+  //       }
+  //     }
+  //   }
+  // });
+
+  // /** Add git clone command */
+  // commands.addCommand(CommandIDs.gitClone, {
+  //   label: trans.__('Clone a Repository'),
+  //   caption: trans.__('Clone a repository from a URL'),
+  //   isEnabled: () => gitModel.pathRepository === null,
+  //   execute: async () => {
+  //     const result = await showDialog({
+  //       title: trans.__('Clone a repo'),
+  //       body: new GitCloneForm(trans),
+  //       focusNodeSelector: 'input',
+  //       buttons: [
+  //         Dialog.cancelButton({ label: trans.__('Cancel') }),
+  //         Dialog.okButton({ label: trans.__('CLONE') })
+  //       ]
+  //     });
+
+  //     if (result.button.accept && result.value) {
+  //       logger.log({
+  //         level: Level.RUNNING,
+  //         message: trans.__('Cloning...')
+  //       });
+  //       try {
+  //         const details = await Private.showGitOperationDialog<IGitCloneArgs>(
+  //           gitModel,
+  //           Operation.Clone,
+  //           trans,
+  //           { path: fileBrowser.model.path, url: result.value }
+  //         );
+  //         logger.log({
+  //           message: trans.__('Successfully cloned'),
+  //           level: Level.SUCCESS,
+  //           details
+  //         });
+  //         await fileBrowser.model.refresh();
+  //       } catch (error) {
+  //         console.error(
+  //           'Encountered an error when cloning the repository. Error: ',
+  //           error
+  //         );
+  //         logger.log({
+  //           message: trans.__('Failed to clone'),
+  //           level: Level.ERROR,
+  //           error
+  //         });
+  //       }
+  //     }
+  //   }
+  // });
+
+  // /** Add git open gitignore command */
+  // commands.addCommand(CommandIDs.gitOpenGitignore, {
+  //   label: trans.__('Open .gitignore'),
+  //   caption: trans.__('Open .gitignore'),
+  //   isEnabled: () => gitModel.pathRepository !== null,
+  //   execute: async () => {
+  //     await gitModel.ensureGitignore();
+  //   }
+  // });
+
+  /** Add restart and run all + kernel check command */
+  commands.addCommand(CommandIDs.restartRunAllCheckKernel, {
+    label: trans.__('restartRunAll and check kernel status'),
     isEnabled: () => gitModel.pathRepository !== null,
-    execute: async args => {
-      if (gitModel.pathRepository === null) {
-        console.warn(
-          trans.__('Not in a Git repository. Unable to add a remote.')
-        );
-        return;
-      }
-      let url = args['url'] as string;
-      const name = args['name'] as string;
-
-      if (!url) {
-        const result = await InputDialog.getText({
-          title: trans.__('Add a remote repository'),
-          placeholder: trans.__('Remote Git repository URL')
-        });
-
-        if (result.button.accept) {
-          url = result.value;
-        }
-      }
-
-      if (url) {
-        try {
-          await gitModel.addRemote(url, name);
-        } catch (error) {
-          console.error(error);
-          showErrorMessage(
-            trans.__('Error when adding remote repository'),
-            error
-          );
-        }
-      }
-    }
-  });
-
-  /** Add git clone command */
-  commands.addCommand(CommandIDs.gitClone, {
-    label: trans.__('Clone a Repository'),
-    caption: trans.__('Clone a repository from a URL'),
-    isEnabled: () => gitModel.pathRepository === null,
     execute: async () => {
-      const result = await showDialog({
-        title: trans.__('Clone a repo'),
-        body: new GitCloneForm(trans),
-        focusNodeSelector: 'input',
-        buttons: [
-          Dialog.cancelButton({ label: trans.__('Cancel') }),
-          Dialog.okButton({ label: trans.__('CLONE') })
-        ]
-      });
-
-      if (result.button.accept && result.value) {
-        logger.log({
-          level: Level.RUNNING,
-          message: trans.__('Cloning...')
+      console.log('starting command restartRunAllCheckKernel');
+      console.log(notebookTracker.currentWidget.sessionContext.statusChanged);
+      commands
+        .execute('runmenu:restart-and-run-all')
+        .then(() => {
+          // let isRestarting = false;
+          // let counter = 0;
+          console.log(
+            notebookTracker.currentWidget.sessionContext.statusChanged
+          );
+          // while (!isRestarting) {
+          //   console.log(`attemp ${counter}`);
+          //   console.log(
+          //     `inside the while loop, isRestarting is ${notebookTracker.currentWidget.sessionContext.isRestarting}`
+          //   );
+          //   isRestarting =
+          //     notebookTracker.currentWidget.sessionContext.isRestarting;
+          //   counter += 1;
+          // }
+        })
+        .then(() => {
+          console.log('complete');
+          console.log(
+            `isRestarting is ${notebookTracker.currentWidget.sessionContext.isRestarting}`
+          );
         });
-        try {
-          const details = await Private.showGitOperationDialog<IGitCloneArgs>(
-            gitModel,
-            Operation.Clone,
-            trans,
-            { path: fileBrowser.model.path, url: result.value }
-          );
-          logger.log({
-            message: trans.__('Successfully cloned'),
-            level: Level.SUCCESS,
-            details
-          });
-          await fileBrowser.model.refresh();
-        } catch (error) {
-          console.error(
-            'Encountered an error when cloning the repository. Error: ',
-            error
-          );
-          logger.log({
-            message: trans.__('Failed to clone'),
-            level: Level.ERROR,
-            error
-          });
-        }
-      }
-    }
-  });
-
-  /** Add git open gitignore command */
-  commands.addCommand(CommandIDs.gitOpenGitignore, {
-    label: trans.__('Open .gitignore'),
-    caption: trans.__('Open .gitignore'),
-    isEnabled: () => gitModel.pathRepository !== null,
-    execute: async () => {
-      await gitModel.ensureGitignore();
     }
   });
 
@@ -783,8 +829,6 @@ export function addCommands(
       }
     }
   });
-
-  // step 3: save
 
   /** Add test SHOW MENU COMMAND */
   commands.addCommand(CommandIDs.gitShowDialog, {
@@ -1389,12 +1433,15 @@ export function createGitMenu(
   ].forEach(command => {
     menu.addItem({ command });
   });
-
-  menu.addItem({ type: 'separator' });
   // menu.addItem({ command: CommandIDs.gitAdd });
+
   menu.addItem({ type: 'separator' });
 
   menu.addItem({ command: CommandIDs.saveNotebook });
+
+  menu.addItem({ type: 'separator' });
+
+  menu.addItem({ command: CommandIDs.restartRunAllCheckKernel });
 
   // menu.addItem({
   //   command: CommandIDs.runMultipleCommands,
@@ -2298,6 +2345,7 @@ namespace Private {
       const nonEmptyCell = cell.model.value.text.length > 0;
       if (codeCell && nonEmptyCell) {
         const codeCellModel = cell.model as ICodeCellModel;
+        // let ccmodel: CodeCellModel;
         const cellNumber =
           cellNumberType === 'cell_index'
             ? notebook.activeCellIndex
@@ -2327,6 +2375,44 @@ namespace Private {
       return;
     } else return;
   }
+
+  export async function update(
+    widget: INotebookTracker,
+    connection: Session.ISessionConnection | null,
+    status: Kernel.Status,
+    kernelConnection: Kernel.IKernelConnection
+  ): Promise<void> {
+    console.log('we are inside the update function now. printing connection ');
+    console.log(connection);
+    if (!connection) {
+      console.log('printing connection inside no connection');
+      console.log(connection);
+      console.log('No connection! trying again');
+      return update(widget, connection, status, kernelConnection);
+    }
+    // apparently kernelConnection.connectionstatus is undefined
+    console.log('kernelConnection.connectionStatus');
+
+    const kernelChanged = (): void => {
+      void update(widget, connection, status, kernelConnection);
+    };
+    console.log('status is ');
+    console.log(status);
+    console.log('printing kernelChanged');
+
+    // const kc = connection.kernelChanged.connect();
+    console.log('Did the kernel change?');
+    console.log(kernelChanged);
+    console.log(status);
+    console.log(kernelConnection);
+
+    if (status.endsWith('restarting')) {
+      console.log(status);
+      console.log('status ends with restarting');
+      return update(widget, connection, status, kernelConnection);
+    }
+  }
+
   // Get the current widget and activate unless the args specify otherwise.
   export function getCurrent(
     tracker: INotebookTracker,
@@ -2341,4 +2427,5 @@ namespace Private {
     return widget;
   }
 }
+
 /* eslint-enable no-inner-declarations */
