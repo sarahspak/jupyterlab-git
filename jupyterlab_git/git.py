@@ -8,6 +8,7 @@ import re
 import shlex
 import subprocess
 from urllib.parse import unquote
+import re
 
 import nbformat
 import pexpect
@@ -130,6 +131,8 @@ async def execute(
 
         get_logger().debug("Execute {!s} in {!s}.".format(cmdline, cwd))
         if username is not None and password is not None:
+            get_logger().debug(f"username is {username} and password is {password}")
+            get_logger().debug(f"we are inside the first if")
             code, output, error = await call_subprocess_with_authentication(
                 cmdline,
                 username,
@@ -138,7 +141,13 @@ async def execute(
                 env,
             )
         else:
+            get_logger().debug(f"we are inside the else")
             current_loop = tornado.ioloop.IOLoop.current()
+            get_logger().debug(f"current_loop is {current_loop}")
+            get_logger().debug(f"cwd is {cwd}")
+            get_logger().debug(f"env is {env}")
+            get_logger().debug(f"cmdline is {cmdline}")
+            get_logger().debug(f"call_subprocess is {call_subprocess}")
             code, output, error = await current_loop.run_in_executor(
                 None, call_subprocess, cmdline, cwd, env
             )
@@ -804,9 +813,11 @@ class Git:
         if code != 0:
             response["message"] = error
         else:
-            response["top_level_repo_url"] = (
-                output.replace("git@", "").replace(":", "/")
-            ).rstrip(".git")
+            response["top_level_repo_url"] = re.sub(
+                "\n$",
+                "",
+                re.sub("\.git$", "", output.replace("git@", "")).replace(":", "/"),
+            )
             response["url"] = (
                 str(response["top_level_repo_url"]) + f"/blob/{commit_sha}/{file_name}"
             )
@@ -871,7 +882,10 @@ class Git:
 
             if f["x"] == "D" or f["y"] == "D":
                 deleted.append(f["from"].strip('"'))
-        return await deleted
+        get_logger().debug("deleted list is printed in full here ")
+        get_logger().debug(f"{deleted}")
+
+        return deleted
 
     async def add_all_untracked(self, top_repo_path):
         """

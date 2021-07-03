@@ -99,10 +99,6 @@ async function activate(
   try {
     serverSettings = await getServerSettings(trans);
     const { frontendVersion, gitVersion, serverVersion } = serverSettings;
-    console.log(frontendVersion);
-    console.log(gitVersion);
-    console.log(serverVersion);
-    console.log(serverSettings);
     // Version validation
     if (!gitVersion) {
       throw new Error(

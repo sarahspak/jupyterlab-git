@@ -639,7 +639,15 @@ export namespace Git {
      */
     filename?: string;
   }
-
+  /** Interface for GitAddWithBranching request result.
+   * For recording which decisions the user made, and debugging
+   */
+  export interface IGitAddWithBranching {
+    addCurrentBranch: boolean;
+    addNewBranch: boolean;
+    changeBranch: boolean;
+    gitAddSuccess: boolean;
+  }
   /** Interface for GitCheckout request result.
    * For reporting errors in checkout
    */

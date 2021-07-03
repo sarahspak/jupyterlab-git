@@ -543,10 +543,7 @@ export function addCommands(
       }
 
       // step 4 - commit
-      logger.log({
-        level: Level.RUNNING,
-        message: trans.__('starting git commit...')
-      });
+
       const tryCommit = await Private.gitCommit(gitModel);
       if (!tryCommit) {
         console.log('something went wrong w/ the commit');
@@ -564,7 +561,6 @@ export function addCommands(
       }
 
       // step 5 - push
-      console.log('can we even do this git push thing?');
       logger.log({
         level: Level.RUNNING,
         message: trans.__('starting git push...')
@@ -572,62 +568,27 @@ export function addCommands(
       const currBranchName = await Private.getCurrBranchName(gitModel).then(
         result => result.current_branch
       );
-      void showDialog({
-        title: 'Git Push',
-        body: (
-          <span>
-            {'About to push this notebook to the branch below'}
-            {current.context.path}
-            {currBranchName}
-          </span>
-        ),
-        buttons: [
-          Dialog.cancelButton({ label: trans.__('Cancel') }),
-          Dialog.okButton({ label: trans.__('Yes') })
-        ]
-      })
-        .then(async result => {
-          if (result.button.accept) {
-            console.log('starting git push');
-            try {
-              await commands.execute('git:push').then(() => {
-                console.log('we successfully pushed!');
-                logger.log({
-                  level: Level.SUCCESS,
-                  message: 'Git push is complete'
-                });
-              });
-            } catch (error) {
-              console.log('error in our git push command');
-              logger.log({
-                level: Level.ERROR,
-                message: 'Git push failed',
-                error
-              });
-              return;
-            }
-          } else {
-            console.log('something went wrong w/ the commit');
-            logger.log({
-              level: Level.ERROR,
-              message: 'Commit failed'
-            });
-          }
-        })
-        .then(() => {
-          // step 6 get commit link
-          try {
-            Private.gitGetWebURL(gitModel, current_file_name).then(result => {
-              console.log(`successfully got weburl ${result.url}`);
-            });
-          } catch (error) {
-            logger.log({
-              level: Level.ERROR,
-              message: 'error in getting gitWebURL',
-              error
-            });
-          }
-        });
+      await Private.gitPush(
+        gitModel,
+        commands,
+        current.context.path,
+        currBranchName
+      ).then(async () => {
+        // step 6 get the link from GHE
+        try {
+          await Private.gitGetWebURL(gitModel, current_file_name);
+          logger.log({
+            level: Level.SUCCESS,
+            message: 'success in getting gitWebURL to show up'
+          });
+        } catch (error) {
+          logger.log({
+            level: Level.ERROR,
+            message: 'error in getting gitWebURL',
+            error
+          });
+        }
+      });
     }
   });
 
@@ -663,20 +624,68 @@ export function addCommands(
       // then we git add all deleted files, so that git will detect that we've renamed the file
       // then we git push
       try {
-        await Private.gitAddWithBranching(gitModel, current_file_name)
-          .then(() => {
-            // check to see if we can see if a file has been renamed after we add this current file
-            gitModel.get_changed_files().then(result => {
-              console.log('this is changesWORKINGvsHead');
-              console.log(result[0].files);
-              console.log('this is changesINDEXvsHead');
-              console.log(result[1].files);
-            });
+        const gitAddDialog = Private.gitAddWithBranching(
+          gitModel,
+          current_file_name
+        )
+          .then(gitAdd => {
+            if (gitAdd.gitAddSuccess) {
+              try {
+                // check to see if we can see if a file has been renamed after we add this current file
+                gitModel.get_changed_files().then(result => {
+                  console.log('this is changesWORKINGvsHead');
+                  console.log(result[0].files);
+                  console.log('this is changesINDEXvsHead');
+                  console.log(result[1].files);
+                });
+              } catch (error) {
+                console.log('failed to get changed files');
+              }
+            }
           })
-          .then(() => gitModel.getAllDeletedFiles());
+          .then(() => {
+            try {
+              gitModel.getAllDeletedFiles().then(delFiles => {
+                if (delFiles) {
+                  console.log(delFiles);
+                  console.log('we have some deleted files!');
+                } else if (!delFiles) {
+                  console.log("we dont' have any deleted files");
+                }
+              });
+            } catch (error) {
+              console.log(
+                'get all deletd files failed, or there are no deleted files'
+              );
+            }
+          });
+        return gitAddDialog;
       } catch (error) {
-        throw error;
+        console.log('the whole sequence failed somehow');
+        console.log(error);
       }
+      // step 4 - commit
+      const tryCommit = await Private.gitCommit(gitModel);
+      if (!tryCommit) {
+        console.log('something went wrong w/ the commit');
+        logger.log({
+          level: Level.ERROR,
+          message: 'Commit failed'
+        });
+        return;
+      } else {
+        console.log('we successfully committed!');
+        logger.log({
+          level: Level.SUCCESS,
+          message: 'Commit is complete'
+        });
+      }
+
+      // get the web url
+      console.log('getting gitGetWebURL');
+      await Private.gitGetWebURL(gitModel, current_file_name).then(() => {
+        console.log('all done');
+      });
     }
   });
 
@@ -1382,6 +1391,8 @@ export function createGitMenu(
   });
 
   menu.addItem({ type: 'separator' });
+  // menu.addItem({ command: CommandIDs.gitAdd });
+  menu.addItem({ type: 'separator' });
 
   menu.addItem({ command: CommandIDs.saveNotebook });
 
@@ -1673,6 +1684,57 @@ namespace Private {
     authentication?: Git.IAuth
   ): Promise<any> {}
 
+  export async function gitPush<T>(
+    model: GitExtension,
+    commands: CommandRegistry,
+    path: string,
+    currBranchName: string,
+    retry = false
+  ): Promise<void> {
+    void showDialog({
+      title: 'Git Push',
+      body: (
+        <span>
+          {'About to push this notebook to the branch below'}
+          {path}
+          {currBranchName}
+        </span>
+      ),
+      buttons: [
+        Dialog.cancelButton({ label: 'Cancel' }),
+        Dialog.okButton({ label: 'Yes' })
+      ]
+    }).then(async result => {
+      if (result.button.accept) {
+        console.log('starting git push');
+        try {
+          await commands.execute('git:push').then(() => {
+            console.log('we successfully pushed!');
+            logger.log({
+              level: Level.SUCCESS,
+              message: 'Git push is complete'
+            });
+          });
+        } catch (error) {
+          console.log('error in our git push command');
+          logger.log({
+            level: Level.ERROR,
+            message: 'Git push failed',
+            error
+          });
+          return;
+        }
+      } else {
+        console.log('something went wrong w/ the commit');
+        logger.log({
+          level: Level.ERROR,
+          message: 'Commit failed'
+        });
+        return;
+      }
+    });
+  }
+
   export async function gitGetAllFiles<T>(
     model: GitExtension,
     operation: Operation,
@@ -1864,6 +1926,10 @@ namespace Private {
   }
 
   export async function gitCommit(model: GitExtension): Promise<boolean> {
+    logger.log({
+      level: Level.RUNNING,
+      message: 'starting git commit...'
+    });
     let commitMsg = '';
     // todo; try to find some way of making the commit box enforce good behavior
     try {
@@ -1918,11 +1984,51 @@ namespace Private {
   export async function gitGetWebURL(
     model: GitExtension,
     file_name: string
-  ): Promise<Git.IGetRemoteURLResult> {
+  ): Promise<void> {
+    // ): Promise<Git.IGetRemoteURLResult> {
+    logger.log({
+      level: Level.RUNNING,
+      message: 'getting commit hash and URL...'
+    });
     const commit_sha = model.currentBranch.top_commit;
     console.log('this is my most recent commit');
     console.log(commit_sha);
-    return model.get_remote_url(commit_sha, file_name);
+    const final_url = await model
+      .get_remote_url(commit_sha, file_name)
+      .then(result => {
+        return result.url;
+      });
+
+    // .then(result => {
+    //   console.log(result.url);
+    //   console.log('is url');
+    //   return result.url;
+    // });
+    console.log(final_url);
+    // return model.get_remote_url(commit_sha, file_name);
+    await showDialog({
+      title: 'Commit hash',
+      body: (
+        <span>
+          {'Would you like to visit the following link?'}
+          <br />
+          <br />
+          {final_url}
+        </span>
+      ),
+      buttons: [
+        Dialog.cancelButton({ label: 'Cancel' }),
+        Dialog.okButton({ label: 'Save' })
+      ]
+    }).then(result => {
+      if (result.button.accept) {
+        window.open(final_url);
+        console.log('window should be open');
+      } else {
+        console.log('not opening ');
+        return;
+      }
+    });
   }
 
   /**
@@ -1956,7 +2062,13 @@ namespace Private {
     model: GitExtension,
     short_filename: string,
     retry = false
-  ): Promise<void> {
+  ): Promise<Git.IGitAddWithBranching> {
+    let recordDecisions = {
+      addCurrentBranch: false,
+      addNewBranch: false,
+      changeBranch: false,
+      gitAddSuccess: false
+    };
     const currBranchName = await getCurrBranchName(model).then(
       result => result.current_branch
     );
@@ -1975,7 +2087,7 @@ namespace Private {
           <br />
         </div>
       );
-      void showDialog({
+      showDialog({
         title: 'Git Add',
         body,
         buttons: [
@@ -1994,6 +2106,17 @@ namespace Private {
         // BUTTON ONE - GO AHEAD AND ADD A NEW FILE TO CURRENT BRANCH
         if (accept) {
           modelAddFile();
+          recordDecisions.addCurrentBranch = true;
+          recordDecisions.gitAddSuccess = true;
+          console.log('we added the current file to the current branch');
+          console.log('this is what recordDecisions looks like');
+          console.log(recordDecisions);
+          logger.log({
+            level: Level.SUCCESS,
+            message: 'Added current file to the repo!'
+          });
+          console.log('added back the return statement');
+          return;
         } else if (label.includes('Make New Branch')) {
           // BUTTON TWO - MAKE A NEW BRANCH IF THEY CLICK THE MAKE A NEW BRANCH BUTTON
           let newBranchName = '';
@@ -2020,6 +2143,7 @@ namespace Private {
                     file_name_checkout
                   );
                   if (makeNewBranchResult) {
+                    recordDecisions.addNewBranch = true;
                     console.log(
                       `success! branch has been created, and the name is ${newBranchName}`
                     );
@@ -2058,6 +2182,7 @@ namespace Private {
           }
         } else if (label.includes('Change Branch')) {
           // BUTTON THREE - CHANGE BRANCHES TO ANOTHER EXISTING BRANCH
+          recordDecisions.changeBranch = true;
           console.log(
             'lets change branches - but i dont have code yet for this'
           );
@@ -2070,6 +2195,7 @@ namespace Private {
     } catch (error) {
       console.log('something somewhere went wrong');
     }
+    return recordDecisions;
   }
 
   /**

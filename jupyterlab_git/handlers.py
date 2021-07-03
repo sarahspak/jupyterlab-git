@@ -368,7 +368,11 @@ class GitGetAllDeletedHandler(GitHandler):
         body = await self.git.get_all_deleted_files(
             self.get_json_body()["top_repo_path"]
         )
-        if body["code"] != 0:
+        self.log.debug(f"body is {body}")
+
+        if not body:
+            self.set_status(500)
+        elif body["code"] != 0:
             self.set_status(500)
         self.finish(json.dumps(body))
 

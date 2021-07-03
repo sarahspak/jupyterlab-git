@@ -283,15 +283,13 @@ export class GitExtension implements IGitExtension {
 
   async getAllDeletedFiles(): Promise<Git.IChangedFilesResult> {
     const path = await this._getPathRepository();
-    const results = await requestAPI<Git.IChangedFilesResult>(
+    return await requestAPI<Git.IChangedFilesResult>(
       'get_all_deleted_files',
       'POST',
       {
         top_repo_path: path
       }
     );
-    await this.refreshStatus();
-    return results;
   }
 
   /**
@@ -929,9 +927,6 @@ export class GitExtension implements IGitExtension {
           current_path: path
         }
       );
-      console.log('printing data out before catch an error ');
-      console.log(data);
-      console.log(data.current_branch);
       return data.current_branch || null;
     } catch (error) {
       console.log('we have an error ');
